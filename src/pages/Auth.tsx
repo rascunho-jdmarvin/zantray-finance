@@ -18,22 +18,26 @@ export default function AuthPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       toast({ title: 'Preencha todos os campos', variant: 'destructive' });
       return;
     }
-    if (isLogin) {
-      login(email, password);
-      navigate('/dashboard');
-    } else {
-      if (!name) {
-        toast({ title: 'Informe seu nome', variant: 'destructive' });
-        return;
+    try {
+      if (isLogin) {
+        await login(email, password);
+        navigate('/dashboard');
+      } else {
+        if (!name) {
+          toast({ title: 'Informe seu nome', variant: 'destructive' });
+          return;
+        }
+        await register({ name, email, password });
+        navigate('/onboarding');
       }
-      register({ name, email, password });
-      navigate('/onboarding');
+    } catch (err: unknown) {
+      toast({ title: (err as Error).message || 'Erro ao autenticar', variant: 'destructive' });
     }
   };
 

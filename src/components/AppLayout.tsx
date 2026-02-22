@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   LayoutDashboard, Receipt, BarChart3, TrendingUp,
-  User, LogOut, Menu, X, ChevronLeft,
+  User, LogOut, Menu, X, ChevronLeft, FolderKanban,
 } from 'lucide-react';
 import { useApp } from '@/contexts/AppContext';
 import { cn } from '@/lib/utils';
@@ -11,6 +11,7 @@ import { cn } from '@/lib/utils';
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { path: '/contas', label: 'Contas', icon: Receipt },
+  { path: '/projetos', label: 'Projetos', icon: FolderKanban },
   { path: '/analises', label: 'Análises', icon: BarChart3 },
   { path: '/investimentos', label: 'Investimentos', icon: TrendingUp },
   { path: '/perfil', label: 'Perfil', icon: User },
@@ -180,7 +181,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         {/* Mobile Bottom Nav */}
         <nav className="md:hidden flex border-t border-border bg-card">
-          {NAV_ITEMS.slice(0, 4).map(item => {
+          {NAV_ITEMS.slice(0, 5).map(item => {
             const active = location.pathname === item.path;
             return (
               <Link
