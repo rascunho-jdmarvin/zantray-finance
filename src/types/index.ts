@@ -90,3 +90,24 @@ export interface Analise {
 }
 
 export type StatusClassificacao = Analise['classificacao'];
+
+// ─── Projetos ─────────────────────────────────────
+export interface ProjetoItem {
+  id: string;
+  descricao: string;
+  valorEstimado: number;
+  categoria: ContaCategoria;
+  contaId?: string; // linked conta
+}
+
+export interface Projeto {
+  id: string;
+  nome: string;
+  descricao: string;
+  orcamento: number;
+  status: 'planejado' | 'em_andamento' | 'concluido';
+  dataInicio?: string;
+  dataFim?: string;
+  itens: ProjetoItem[];
+  createdAt: string;
+}

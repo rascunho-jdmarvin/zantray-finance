@@ -11,6 +11,7 @@ const Auth = lazy(() => import("./pages/Auth"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Contas = lazy(() => import("./pages/Contas"));
+const Projetos = lazy(() => import("./pages/Projetos"));
 const Analises = lazy(() => import("./pages/Analises"));
 const Investimentos = lazy(() => import("./pages/Investimentos"));
 const Perfil = lazy(() => import("./pages/Perfil"));
@@ -48,6 +49,7 @@ function AppRoutes() {
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
         <Route path="/contas" element={<ProtectedRoute><Contas /></ProtectedRoute>} />
+        <Route path="/projetos" element={<ProtectedRoute><Projetos /></ProtectedRoute>} />
         <Route path="/analises" element={<ProtectedRoute><Analises /></ProtectedRoute>} />
         <Route path="/investimentos" element={<ProtectedRoute><Investimentos /></ProtectedRoute>} />
         <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
