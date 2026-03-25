@@ -129,6 +129,20 @@ export default function DespesasPage() {
                 </div>
               </div>
 
+              {/* Projeto */}
+              <div>
+                <Label>Projeto (opcional)</Label>
+                <Select value={form.projetoId || '__none__'} onValueChange={(v) => setForm(f => ({ ...f, projetoId: v === '__none__' ? undefined : v }))}>
+                  <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Nenhum</SelectItem>
+                    {projetos.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.titulo}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               {/* Parcelamento */}
               <div className="flex items-center gap-2">
                 <Checkbox
