@@ -5,16 +5,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { lazy, Suspense } from "react";
 import { AppProvider, useApp } from "@/contexts/AppContext";
+import { FinanceProvider } from "@/contexts/FinanceContext";
 import AppLayout from "@/components/AppLayout";
 
 const Auth = lazy(() => import("./pages/Auth"));
 const Onboarding = lazy(() => import("./pages/Onboarding"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
-const Contas = lazy(() => import("./pages/Contas"));
+const Despesas = lazy(() => import("./pages/Despesas"));
 const Projetos = lazy(() => import("./pages/Projetos"));
-const Analises = lazy(() => import("./pages/Analises"));
-const Investimentos = lazy(() => import("./pages/Investimentos"));
-const Perfil = lazy(() => import("./pages/Perfil"));
+const Calendario = lazy(() => import("./pages/Calendario"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -36,7 +35,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, user } = useApp();
   if (!isAuthenticated) return <Navigate to="/auth" replace />;
   if (user && !user.onboardingCompleted) return <Navigate to="/onboarding" replace />;
-  return <AppLayout>{children}</AppLayout>;
+  return (
+    <FinanceProvider>
+      <AppLayout>{children}</AppLayout>
+    </FinanceProvider>
+  );
 }
 
 function AppRoutes() {
@@ -48,11 +51,9 @@ function AppRoutes() {
         <Route path="/auth" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <Auth />} />
         <Route path="/onboarding" element={<Onboarding />} />
         <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-        <Route path="/contas" element={<ProtectedRoute><Contas /></ProtectedRoute>} />
+        <Route path="/despesas" element={<ProtectedRoute><Despesas /></ProtectedRoute>} />
         <Route path="/projetos" element={<ProtectedRoute><Projetos /></ProtectedRoute>} />
-        <Route path="/analises" element={<ProtectedRoute><Analises /></ProtectedRoute>} />
-        <Route path="/investimentos" element={<ProtectedRoute><Investimentos /></ProtectedRoute>} />
-        <Route path="/perfil" element={<ProtectedRoute><Perfil /></ProtectedRoute>} />
+        <Route path="/calendario" element={<ProtectedRoute><Calendario /></ProtectedRoute>} />
         <Route path="/" element={<Navigate to="/auth" replace />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
