@@ -30,7 +30,7 @@ const emptyForm = (): Omit<Despesa, 'id'> => ({
 });
 
 export default function DespesasPage() {
-  const { despesas, addDespesa, deleteDespesa, togglePaga, fixas, variaveis, parceladas, totalMes, totalPago, totalPendente } = useFinance();
+  const { despesas, addDespesa, deleteDespesa, togglePaga, fixas, variaveis, parceladas, totalMes, totalPago, totalPendente, projetos } = useFinance();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
 
