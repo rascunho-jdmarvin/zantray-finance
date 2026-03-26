@@ -1,48 +1,104 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import type { Despesa, Projeto } from '@/types/finance';
-import { MOCK_DESPESAS, MOCK_PROJETOS } from '@/data/mockData';
+import { useApp } from '@/contexts/AppContext';
+import type { Conta } from '@/types';
 
-const generateId = () => Math.random().toString(36).substr(2, 9);
+// Translator from Conta (DB) to Despesa (Frontend)
+function mapContaToDespesa(conta: Conta): Despesa {
+  const mesFormatado = String(conta.mes).padStart(2, '0');
+  const diaFormatado = String(conta.diaVencimento).padStart(2, '0');
+
+  return {
+    id: conta.id,
+    titulo: conta.descricao,
+    valor: conta.valor,
+    tipo: conta.tipo,
+    categoria: conta.categoria as Despesa['categoria'],
+    dataVencimento: `${conta.ano}-${mesFormatado}-${diaFormatado}`,
+    paga: conta.paga,
+    parcelada: false,
+    projetoId: conta.projetoId,
+    metodoPagamento: conta.metodoPagamento,
+    dataPagamento: conta.dataPagamento,
+    isTransferencia: conta.isTransferencia,
+    importacaoId: conta.importacaoId,
+  };
+}
 
 export function useDespesas() {
-  const [despesas, setDespesas] = useState<Despesa[]>(MOCK_DESPESAS);
+  const { contas, addConta, updateConta, deleteConta, togglePaga: contextTogglePaga } = useApp();
 
-  const addDespesa = useCallback((d: Omit<Despesa, 'id'>) => {
-    setDespesas(prev => [...prev, { ...d, id: generateId() }]);
-  }, []);
+  // Todas as despesas incluindo transferências (para a tabela completa)
+  const despesas = useMemo(() => contas.map(mapContaToDespesa), [contas]);
 
-  const updateDespesa = useCallback((id: string, data: Partial<Despesa>) => {
-    setDespesas(prev => prev.map(d => d.id === id ? { ...d, ...data } : d));
-  }, []);
+  // Apenas despesas reais (excluindo transferências internas) para totais
+  const despesasReais = useMemo(
+    () => despesas.filter(d => !d.isTransferencia),
+    [despesas]
+  );
 
-  const deleteDespesa = useCallback((id: string) => {
-    setDespesas(prev => prev.filter(d => d.id !== id));
-  }, []);
+  const addDespesa = useCallback(async (d: Omit<Despesa, 'id'>) => {
+    const dataPartes = d.dataVencimento.split('-');
+    await addConta({
+      descricao: d.titulo,
+      categoria: d.categoria as Conta['categoria'],
+      valor: d.valor,
+      tipo: d.tipo,
+      diaVencimento: parseInt(dataPartes[2]),
+      paga: d.paga,
+      mes: parseInt(dataPartes[1]),
+      ano: parseInt(dataPartes[0]),
+      metodoPagamento: d.metodoPagamento,
+      dataPagamento: d.dataPagamento,
+      projetoId: d.projetoId,
+      isTransferencia: d.isTransferencia ?? false,
+    });
+  }, [addConta]);
 
-  const togglePaga = useCallback((id: string) => {
-    setDespesas(prev => prev.map(d => d.id === id ? { ...d, paga: !d.paga } : d));
-  }, []);
+  const updateLocalDespesa = useCallback(async (id: string, d: Partial<Despesa>) => {
+    const updatePayload: Partial<Conta> = {};
+    if (d.titulo !== undefined) updatePayload.descricao = d.titulo;
+    if (d.categoria !== undefined) updatePayload.categoria = d.categoria as Conta['categoria'];
+    if (d.valor !== undefined) updatePayload.valor = d.valor;
+    if (d.tipo !== undefined) updatePayload.tipo = d.tipo;
+    if (d.dataVencimento !== undefined) {
+      const dataPartes = d.dataVencimento.split('-');
+      updatePayload.diaVencimento = parseInt(dataPartes[2]);
+      updatePayload.mes = parseInt(dataPartes[1]);
+      updatePayload.ano = parseInt(dataPartes[0]);
+    }
+    if (d.paga !== undefined) updatePayload.paga = d.paga;
+    if (d.metodoPagamento !== undefined) updatePayload.metodoPagamento = d.metodoPagamento;
+    if (d.dataPagamento !== undefined) updatePayload.dataPagamento = d.dataPagamento;
+    if (d.projetoId !== undefined) updatePayload.projetoId = d.projetoId;
+    if (d.isTransferencia !== undefined) updatePayload.isTransferencia = d.isTransferencia;
 
-  const totalMes = useMemo(() => despesas.reduce((s, d) => s + d.valor, 0), [despesas]);
-  const totalPago = useMemo(() => despesas.filter(d => d.paga).reduce((s, d) => s + d.valor, 0), [despesas]);
-  const totalPendente = useMemo(() => despesas.filter(d => !d.paga).reduce((s, d) => s + d.valor, 0), [despesas]);
+    await updateConta(id, updatePayload);
+  }, [updateConta]);
 
-  const fixas = useMemo(() => despesas.filter(d => d.tipo === 'fixa' && !d.parcelada), [despesas]);
-  const variaveis = useMemo(() => despesas.filter(d => d.tipo === 'variavel' && !d.parcelada), [despesas]);
-  const parceladas = useMemo(() => despesas.filter(d => d.parcelada), [despesas]);
+  const removeDespesa = useCallback((id: string) => deleteConta(id), [deleteConta]);
+  const togglePaga = useCallback((id: string) => contextTogglePaga(id), [contextTogglePaga]);
+
+  // Totais excluem transferências internas para não inflar os gastos
+  const totalMes = useMemo(() => despesasReais.reduce((s, d) => s + d.valor, 0), [despesasReais]);
+  const totalPago = useMemo(() => despesasReais.filter(d => d.paga).reduce((s, d) => s + d.valor, 0), [despesasReais]);
+  const totalPendente = useMemo(() => despesasReais.filter(d => !d.paga).reduce((s, d) => s + d.valor, 0), [despesasReais]);
+
+  const fixas = useMemo(() => despesasReais.filter(d => d.tipo === 'fixa' && !d.parcelada), [despesasReais]);
+  const variaveis = useMemo(() => despesasReais.filter(d => d.tipo === 'variavel' && !d.parcelada), [despesasReais]);
+  const parceladas = useMemo(() => despesasReais.filter(d => d.parcelada), [despesasReais]);
 
   const proximasVencer = useMemo(() => {
     const now = new Date();
     const in7days = new Date(now.getTime() + 7 * 86400000);
-    return despesas
+    return despesasReais
       .filter(d => !d.paga && new Date(d.dataVencimento) >= now && new Date(d.dataVencimento) <= in7days)
       .sort((a, b) => new Date(a.dataVencimento).getTime() - new Date(b.dataVencimento).getTime());
-  }, [despesas]);
+  }, [despesasReais]);
 
-  // Generate future installments for calendar view
   const parcelasProjetadas = useMemo(() => {
     const result: Despesa[] = [];
-    despesas.filter(d => d.parcelada && d.totalParcelas && d.parcelasPagas !== undefined).forEach(d => {
+    despesasReais.filter(d => d.parcelada && d.totalParcelas && d.parcelasPagas !== undefined).forEach(d => {
       const restantes = d.totalParcelas! - (d.parcelasPagas || 0);
       const baseDate = new Date(d.dataVencimento);
       for (let i = 0; i < restantes; i++) {
@@ -58,29 +114,46 @@ export function useDespesas() {
       }
     });
     return result;
-  }, [despesas]);
+  }, [despesasReais]);
 
   return {
-    despesas, addDespesa, updateDespesa, deleteDespesa, togglePaga,
+    despesas,
+    despesasReais,
+    addDespesa,
+    updateDespesa: updateLocalDespesa,
+    deleteDespesa: removeDespesa,
+    togglePaga,
     totalMes, totalPago, totalPendente,
     fixas, variaveis, parceladas, proximasVencer, parcelasProjetadas,
   };
 }
 
 export function useProjetos() {
-  const [projetos, setProjetos] = useState<Projeto[]>(MOCK_PROJETOS);
+  const { projetos, addProjeto: contextAdd, updateProjeto: contextUpdate, deleteProjeto: contextDelete } = useApp();
 
   const addProjeto = useCallback((p: Omit<Projeto, 'id' | 'createdAt'>) => {
-    setProjetos(prev => [...prev, { ...p, id: generateId(), createdAt: new Date().toISOString() }]);
-  }, []);
+    contextAdd(p as never);
+  }, [contextAdd]);
 
   const updateProjeto = useCallback((id: string, data: Partial<Projeto>) => {
-    setProjetos(prev => prev.map(p => p.id === id ? { ...p, ...data } : p));
-  }, []);
+    contextUpdate(id, data as never);
+  }, [contextUpdate]);
 
   const deleteProjeto = useCallback((id: string) => {
-    setProjetos(prev => prev.filter(p => p.id !== id));
-  }, []);
+    contextDelete(id);
+  }, [contextDelete]);
 
-  return { projetos, addProjeto, updateProjeto, deleteProjeto };
+  return { projetos: projetos as unknown as Projeto[], addProjeto, updateProjeto, deleteProjeto };
+}
+
+// ─── Utilitário anti-duplicidade ──────────────────────
+export function calculateTotals(despesas: Despesa[]) {
+  const real = despesas.filter(d => !d.isTransferencia);
+  return {
+    totalReceitas: 0, // receitas virão de outra entidade futuramente
+    totalDespesas: real.reduce((s, d) => s + d.valor, 0),
+    totalTransferencias: despesas.filter(d => d.isTransferencia).reduce((s, d) => s + d.valor, 0),
+    totalPago: real.filter(d => d.paga).reduce((s, d) => s + d.valor, 0),
+    totalPendente: real.filter(d => !d.paga).reduce((s, d) => s + d.valor, 0),
+  };
 }

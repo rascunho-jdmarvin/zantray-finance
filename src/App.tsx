@@ -14,6 +14,8 @@ const Dashboard = lazy(() => import("./pages/Dashboard"));
 const Despesas = lazy(() => import("./pages/Despesas"));
 const Projetos = lazy(() => import("./pages/Projetos"));
 const Calendario = lazy(() => import("./pages/Calendario"));
+const Transacoes = lazy(() => import("./pages/Transacoes"));
+const Importacao = lazy(() => import("./pages/Importacao"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 const queryClient = new QueryClient();
@@ -54,6 +56,8 @@ function AppRoutes() {
         <Route path="/despesas" element={<ProtectedRoute><Despesas /></ProtectedRoute>} />
         <Route path="/projetos" element={<ProtectedRoute><Projetos /></ProtectedRoute>} />
         <Route path="/calendario" element={<ProtectedRoute><Calendario /></ProtectedRoute>} />
+        <Route path="/transacoes" element={<ProtectedRoute><Transacoes /></ProtectedRoute>} />
+        <Route path="/importacao" element={<ProtectedRoute><Importacao /></ProtectedRoute>} />
         <Route path="/" element={<Navigate to="/auth" replace />} />
         <Route path="*" element={<NotFound />} />
       </Routes>

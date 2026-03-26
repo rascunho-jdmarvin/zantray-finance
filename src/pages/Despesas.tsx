@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Trash2, Edit2, Check, X } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Plus, Trash2, Edit2, Check, Upload, ArrowLeftRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,8 +14,12 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
 } from '@/components/ui/dialog';
 import { useFinance } from '@/contexts/FinanceContext';
+import { useApp } from '@/contexts/AppContext';
 import { formatCurrency } from '@/utils/format';
 import { DESPESA_CATEGORIA_LABELS, DESPESA_CATEGORIA_ICONS, type DespesaCategoria, type DespesaTipo, type Despesa } from '@/types/finance';
+import { METODO_PAGAMENTO_LABELS, type MetodoPagamento } from '@/types';
+import TransferenciaDialog from '@/components/transferencias/TransferenciaDialog';
+
 
 const emptyForm = (): Omit<Despesa, 'id'> => ({
   titulo: '',
@@ -27,20 +32,57 @@ const emptyForm = (): Omit<Despesa, 'id'> => ({
   totalParcelas: undefined,
   parcelasPagas: undefined,
   parcelaAtual: undefined,
+  metodoPagamento: 'outros',
+  projetoId: undefined,
 });
 
 export default function DespesasPage() {
-  const { despesas, addDespesa, deleteDespesa, togglePaga, fixas, variaveis, parceladas, totalMes, totalPago, totalPendente, projetos } = useFinance();
+  const navigate = useNavigate();
+  const { user } = useApp();
+  const { despesas, addDespesa, updateDespesa, deleteDespesa, togglePaga, fixas, variaveis, parceladas, totalMes, totalPago, totalPendente, projetos } = useFinance();
   const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm());
+
+  const handleOpenNew = () => {
+    setForm(emptyForm());
+    setEditingId(null);
+    setOpen(true);
+  };
+
+  const handleEdit = (d: Despesa) => {
+    setForm({
+      titulo: d.titulo,
+      valor: d.valor,
+      tipo: d.tipo,
+      categoria: d.categoria,
+      dataVencimento: d.dataVencimento,
+      paga: d.paga,
+      parcelada: d.parcelada,
+      totalParcelas: d.totalParcelas,
+      parcelasPagas: d.parcelasPagas,
+      parcelaAtual: d.parcelaAtual,
+      projetoId: d.projetoId,
+    });
+    setEditingId(d.id);
+    setOpen(true);
+  };
 
   const handleSave = () => {
     if (!form.titulo || form.valor <= 0) return;
-    addDespesa({
-      ...form,
-      parcelaAtual: form.parcelada ? (form.parcelasPagas || 0) + 1 : undefined,
-    });
+    if (editingId) {
+      updateDespesa(editingId, {
+        ...form,
+        parcelaAtual: form.parcelada ? (form.parcelasPagas || 0) + 1 : undefined,
+      });
+    } else {
+      addDespesa({
+        ...form,
+        parcelaAtual: form.parcelada ? (form.parcelasPagas || 0) + 1 : undefined,
+      });
+    }
     setForm(emptyForm());
+    setEditingId(null);
     setOpen(false);
   };
 
@@ -49,10 +91,18 @@ export default function DespesasPage() {
       <div className="flex items-center gap-3 min-w-0">
         <span className="text-lg">{DESPESA_CATEGORIA_ICONS[d.categoria]}</span>
         <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground truncate">{d.titulo}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-sm font-medium text-foreground truncate">{d.titulo}</p>
+            {d.isTransferencia && (
+              <Badge variant="secondary" className="text-[10px] px-1 py-0 gap-0.5">
+                <ArrowLeftRight className="w-2.5 h-2.5" /> Transf.
+              </Badge>
+            )}
+          </div>
           <p className="text-xs text-muted-foreground">
             Vence: {new Date(d.dataVencimento).toLocaleDateString('pt-BR')}
             {d.parcelada && ` · Parcela ${d.parcelaAtual}/${d.totalParcelas}`}
+            {d.metodoPagamento && d.metodoPagamento !== 'outros' && ` · ${METODO_PAGAMENTO_LABELS[d.metodoPagamento]}`}
           </p>
         </div>
       </div>
@@ -66,6 +116,9 @@ export default function DespesasPage() {
         >
           {d.paga ? <Check className="w-3 h-3" /> : 'Pagar'}
         </Button>
+        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground" onClick={() => handleEdit(d)}>
+          <Edit2 className="w-3.5 h-3.5" />
+        </Button>
         <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => deleteDespesa(d.id)}>
           <Trash2 className="w-3.5 h-3.5" />
         </Button>
@@ -73,22 +126,30 @@ export default function DespesasPage() {
     </div>
   );
 
+  const liquido = user?.salarioLiquido || 0;
+  const saldoEstimado = liquido - totalMes;
+
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">Despesas</h1>
           <p className="text-muted-foreground text-sm mt-1">Gerencie suas despesas fixas, variáveis e parceladas</p>
         </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm" className="gap-1.5">
-              <Plus className="w-4 h-4" /> Nova Despesa
-            </Button>
-          </DialogTrigger>
+        <div className="flex gap-2 flex-wrap">
+          <TransferenciaDialog />
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate('/importacao')}>
+            <Upload className="w-4 h-4" /> Importar Extrato
+          </Button>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="gap-1.5" onClick={handleOpenNew}>
+                <Plus className="w-4 h-4" /> Nova
+              </Button>
+            </DialogTrigger>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Nova Despesa</DialogTitle>
+              <DialogTitle>{editingId ? 'Editar Despesa' : 'Nova Despesa'}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div>
@@ -129,6 +190,19 @@ export default function DespesasPage() {
                 </div>
               </div>
 
+              {/* Meio de Pagamento */}
+              <div>
+                <Label>Meio de Pagamento</Label>
+                <Select value={form.metodoPagamento ?? 'outros'} onValueChange={(v: MetodoPagamento) => setForm(f => ({ ...f, metodoPagamento: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(METODO_PAGAMENTO_LABELS).map(([k, v]) => (
+                      <SelectItem key={k} value={k}>{v}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
               {/* Projeto */}
               <div>
                 <Label>Projeto (opcional)</Label>
@@ -167,17 +241,39 @@ export default function DespesasPage() {
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>
-              <Button onClick={handleSave}>Salvar</Button>
+              <Button onClick={handleSave}>{editingId ? 'Atualizar' : 'Salvar'}</Button>
             </DialogFooter>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </div>
+
+      {/* Relação Salário x Contas */}
+      {liquido > 0 && totalMes > 0 && (
+        <div className="bg-accent rounded-xl p-5 text-sm flex flex-col md:flex-row md:items-center justify-between gap-4 border border-border">
+          <div>
+            <p className="text-accent-foreground font-medium text-lg">
+              Suas despesas consomem {((totalMes / liquido) * 100).toFixed(1)}% do seu salário líquido
+            </p>
+            <p className="text-muted-foreground mt-1">
+              Salário: <strong className="text-foreground">{formatCurrency(liquido)}</strong> | 
+              Despesas: <strong className="text-foreground">{formatCurrency(totalMes)}</strong>
+            </p>
+          </div>
+          <div className="text-right bg-background p-3 rounded-lg border border-border">
+            <p className="text-muted-foreground text-xs font-semibold uppercase tracking-wider">Saldo Estimado livre</p>
+            <p className={`text-xl font-bold ${saldoEstimado < 0 ? 'text-destructive' : 'text-primary'}`}>
+              {formatCurrency(saldoEstimado)}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Summary */}
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: 'Total', value: totalMes },
-          { label: 'Pago', value: totalPago },
+          { label: 'Total Mês', value: totalMes },
+          { label: 'Já Pago', value: totalPago },
           { label: 'Pendente', value: totalPendente },
         ].map(s => (
           <Card key={s.label}>

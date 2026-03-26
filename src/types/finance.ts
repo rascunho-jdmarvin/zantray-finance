@@ -56,6 +56,11 @@ export interface Despesa {
   totalParcelas?: number;
   parcelasPagas?: number;
   parcelaAtual?: number; // calculated
+  // Campos estendidos
+  metodoPagamento?: import('@/types').MetodoPagamento;
+  dataPagamento?: string;
+  isTransferencia?: boolean;
+  importacaoId?: string;
 }
 
 // ─── Projetos ─────────────────────────────────────

@@ -5,6 +5,7 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useFinance } from '@/contexts/FinanceContext';
+import { useApp } from '@/contexts/AppContext';
 import { formatCurrency } from '@/utils/format';
 
 const itemAnim = {
@@ -18,6 +19,7 @@ const containerAnim = {
 };
 
 export default function DashboardPage() {
+  const { user } = useApp();
   const { despesas, totalMes, totalPago, totalPendente, proximasVencer } = useFinance();
 
   const pieData = useMemo(() => {
@@ -28,6 +30,9 @@ export default function DashboardPage() {
       { name: 'Variáveis', value: variaveis, color: 'hsl(var(--chart-saving))' },
     ];
   }, [despesas]);
+
+  const liquido = user?.salarioLiquido || 0;
+  const saldoEstimado = liquido - totalMes;
 
   const kpis = [
     { label: 'Total do Mês', value: totalMes, icon: DollarSign, color: 'text-foreground' },
@@ -43,6 +48,30 @@ export default function DashboardPage() {
       </div>
 
       <motion.div variants={containerAnim} initial="hidden" animate="show" className="space-y-6">
+        
+        {/* Relação Salário x Contas */}
+        {liquido > 0 && totalMes > 0 && (
+          <motion.div variants={itemAnim}>
+            <div className="bg-accent rounded-xl p-5 text-sm flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-sm border border-border">
+              <div>
+                <p className="text-accent-foreground font-medium text-lg">
+                  Suas contas ocupam {((totalMes / liquido) * 100).toFixed(1)}% do seu salário líquido
+                </p>
+                <div className="flex gap-4 mt-2 text-muted-foreground">
+                  <p>Salário: <strong className="text-foreground">{formatCurrency(liquido)}</strong></p>
+                  <p>Despesas: <strong className="text-foreground">{formatCurrency(totalMes)}</strong></p>
+                </div>
+              </div>
+              <div className="text-right bg-background p-3 rounded-lg border border-border">
+                <p className="text-muted-foreground text-xs uppercase font-semibold tracking-wide">Saldo Livre Projetado</p>
+                <p className={`text-2xl font-bold ${saldoEstimado < 0 ? 'text-destructive' : 'text-primary'}`}>
+                  {formatCurrency(saldoEstimado)}
+                </p>
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {/* KPIs */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {kpis.map(kpi => (

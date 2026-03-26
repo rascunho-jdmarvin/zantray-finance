@@ -8,6 +8,17 @@ export interface User {
   onboardingCompleted: boolean;
 }
 
+export type MetodoPagamento = 'dinheiro' | 'debito' | 'credito' | 'pix' | 'boleto' | 'outros';
+
+export const METODO_PAGAMENTO_LABELS: Record<MetodoPagamento, string> = {
+  dinheiro: 'Dinheiro',
+  debito: 'Débito',
+  credito: 'Crédito',
+  pix: 'Pix',
+  boleto: 'Boleto',
+  outros: 'Outros',
+};
+
 export interface Conta {
   id: string;
   descricao: string;
@@ -18,6 +29,36 @@ export interface Conta {
   paga: boolean;
   mes: number;
   ano: number;
+  // Campos estendidos
+  metodoPagamento?: MetodoPagamento;
+  dataPagamento?: string; // ISO date
+  projetoId?: string;
+  isTransferencia?: boolean;
+  transferenciaPar?: string; // id da conta par em transferências internas
+  importacaoId?: string;
+}
+
+// ─── Importação de Extratos ──────────────────────────
+export interface Importacao {
+  id: string;
+  nomeArquivo: string;
+  status: 'processando' | 'concluido' | 'erro' | 'revisao_pendente';
+  totalTransacoes: number;
+  totalImportadas: number;
+  totalDuplicatas: number;
+  createdAt: string;
+}
+
+export interface TransacaoImportada {
+  descricao: string;
+  valor: number;
+  data: string; // ISO date
+  categoria: ContaCategoria;
+  metodoPagamento: MetodoPagamento;
+  tipo: 'fixa' | 'variavel';
+  possivelDuplicata: boolean;
+  duplicataDeId?: string;
+  confiancaCategoria: number; // 0-1
 }
 
 export type ContaCategoria =

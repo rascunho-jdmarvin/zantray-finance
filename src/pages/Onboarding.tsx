@@ -93,6 +93,7 @@ export default function OnboardingPage() {
       phone,
       salarioBruto: bruto,
       salarioLiquido: liquido,
+      onboardingCompleted: true
     });
     completeOnboarding({ contas, investimentos });
     toast({ title: 'Onboarding concluído! 🎉' });
