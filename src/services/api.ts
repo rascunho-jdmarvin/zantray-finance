@@ -1,8 +1,30 @@
 import { supabase } from '@/lib/supabase';
-import type { Conta, Importacao, TransacaoImportada } from '@/types';
-import type { TransacoesFiltros, PaginationState, PaginationInfo } from '@/types/transactions';
+import type { Banco, BancoTipo, Conta, Importacao, TransacaoImportada, Transacao } from '@/types';
+import type {
+  TransacoesFiltros, ContasFiltros,
+  PaginationState, PaginationInfo, ExtratoSumario,
+} from '@/types/transactions';
 
 // ─── Helpers ────────────────────────────────────────
+function mapTransacao(r: Record<string, unknown>): Transacao {
+  return {
+    id: r.id as string,
+    descricao: r.descricao as string,
+    valor: r.valor as number,
+    tipo: (r.tipo as Transacao['tipo']) ?? 'saida',
+    categoria: (r.categoria as Transacao['categoria']) ?? 'outros',
+    metodoPagamento: (r.metodo_pagamento as Transacao['metodoPagamento']) ?? 'outros',
+    dataTransacao: r.data_transacao as string,
+    expenseId: (r.expense_id as string) ?? undefined,
+    projectItemId: (r.project_item_id as string) ?? undefined,
+    importacaoId: (r.importacao_id as string) ?? undefined,
+    bancoId: (r.banco_id as string) ?? undefined,
+    isTransferencia: (r.is_transferencia as boolean) ?? false,
+    transferenciaPar: (r.transferencia_par_id as string) ?? undefined,
+    createdAt: r.created_at as string,
+  };
+}
+
 function mapConta(c: Record<string, unknown>): Conta {
   return {
     id: c.id as string,
@@ -31,6 +53,16 @@ function mapImportacao(r: Record<string, unknown>): Importacao {
     totalTransacoes: (r.total_transacoes as number) ?? 0,
     totalImportadas: (r.total_importadas as number) ?? 0,
     totalDuplicatas: (r.total_duplicatas as number) ?? 0,
+    createdAt: r.created_at as string,
+    bancoId: (r.banco_id as string) ?? undefined,
+  };
+}
+
+function mapBanco(r: Record<string, unknown>): Banco {
+  return {
+    id: r.id as string,
+    nome: r.nome as string,
+    tipo: (r.tipo as Banco['tipo']) ?? 'corrente',
     createdAt: r.created_at as string,
   };
 }
@@ -207,9 +239,9 @@ class ApiService {
     return { total, pagas, pendentes };
   }
 
-  // ─── Transações paginadas com filtros ───────────────
-  async getTransacoesPaginadas(
-    filters: TransacoesFiltros,
+  // ─── Contas paginadas com filtros (Despesas) ────────
+  async getContasPaginadas(
+    filters: ContasFiltros,
     pagination: PaginationState
   ): Promise<{ data: Conta[]; pagination: PaginationInfo }> {
     const { page, pageSize } = pagination;
@@ -225,7 +257,7 @@ class ApiService {
       .order('dia_vencimento', { ascending: false })
       .range(from, to);
 
-    query = this._applyFiltros(query, filters);
+    query = this._applyContasFiltros(query, filters);
 
     const { data, error, count } = await query;
     if (error) throw error;
@@ -233,35 +265,22 @@ class ApiService {
     const totalCount = count ?? 0;
     return {
       data: (data ?? []).map((c: Record<string, unknown>) => mapConta(c)),
-      pagination: {
-        page,
-        pageSize,
-        totalCount,
-        totalPages: Math.ceil(totalCount / pageSize),
-      },
+      pagination: { page, pageSize, totalCount, totalPages: Math.ceil(totalCount / pageSize) },
     };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private _applyFiltros(query: any, filters: TransacoesFiltros): any {
+  private _applyContasFiltros(query: any, filters: ContasFiltros): any {
     if (filters.dataInicio) {
       const d = new Date(filters.dataInicio);
-      const mesInicio = d.getMonth() + 1;
-      const anoInicio = d.getFullYear();
-      query = query.or(`ano.gt.${anoInicio},and(ano.eq.${anoInicio},mes.gte.${mesInicio})`);
+      query = query.or(`ano.gt.${d.getFullYear()},and(ano.eq.${d.getFullYear()},mes.gte.${d.getMonth() + 1})`);
     }
     if (filters.dataFim) {
       const d = new Date(filters.dataFim);
-      const mesFim = d.getMonth() + 1;
-      const anoFim = d.getFullYear();
-      query = query.or(`ano.lt.${anoFim},and(ano.eq.${anoFim},mes.lte.${mesFim})`);
+      query = query.or(`ano.lt.${d.getFullYear()},and(ano.eq.${d.getFullYear()},mes.lte.${d.getMonth() + 1})`);
     }
-    if (filters.categorias && filters.categorias.length > 0) {
-      query = query.in('categoria', filters.categorias);
-    }
-    if (filters.metodosPagamento && filters.metodosPagamento.length > 0) {
-      query = query.in('metodo_pagamento', filters.metodosPagamento);
-    }
+    if (filters.categorias?.length) query = query.in('categoria', filters.categorias);
+    if (filters.metodosPagamento?.length) query = query.in('metodo_pagamento', filters.metodosPagamento);
     if (filters.status === 'paga') query = query.eq('paga', true);
     if (filters.status === 'pendente') query = query.eq('paga', false);
     if (filters.projetoId) query = query.eq('projeto_id', filters.projetoId);
@@ -269,6 +288,155 @@ class ApiService {
     if (filters.excluirTransferencias) query = query.eq('is_transferencia', false);
     if (filters.busca) query = query.ilike('descricao', `%${filters.busca}%`);
     return query;
+  }
+
+  // ─── Extrato (tabela transacoes) paginado ───────────
+  async getExtratoPaginado(
+    filters: TransacoesFiltros,
+    pagination: PaginationState
+  ): Promise<{ data: Transacao[]; pagination: PaginationInfo }> {
+    const { page, pageSize } = pagination;
+    const from = page * pageSize;
+    const to = from + pageSize - 1;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase
+      .from('transacoes')
+      .select('*', { count: 'exact' })
+      .order('data_transacao', { ascending: false })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    query = this._applyExtradoFiltros(query, filters);
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+
+    const totalCount = count ?? 0;
+    return {
+      data: (data ?? []).map((r: Record<string, unknown>) => mapTransacao(r)),
+      pagination: { page, pageSize, totalCount, totalPages: Math.ceil(totalCount / pageSize) },
+    };
+  }
+
+  async getExtratoSumario(filters: TransacoesFiltros): Promise<ExtratoSumario> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query: any = supabase.from('transacoes').select('valor, tipo');
+    query = this._applyExtradoFiltros(query, filters);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    let totalReceitas = 0;
+    let totalDespesas = 0;
+    for (const row of (data ?? [])) {
+      if (row.tipo === 'entrada') totalReceitas += Number(row.valor);
+      else totalDespesas += Number(row.valor);
+    }
+    return { totalReceitas, totalDespesas, saldo: totalReceitas - totalDespesas };
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private _applyExtradoFiltros(query: any, filters: TransacoesFiltros): any {
+    if (filters.dataInicio) query = query.gte('data_transacao', filters.dataInicio);
+    if (filters.dataFim) query = query.lte('data_transacao', filters.dataFim);
+    if (filters.tipo && filters.tipo !== 'todas') query = query.eq('tipo', filters.tipo);
+    if (filters.categorias?.length) query = query.in('categoria', filters.categorias);
+    if (filters.metodosPagamento?.length) query = query.in('metodo_pagamento', filters.metodosPagamento);
+    // projetoId: handled client-side (join via projeto_itens) — see useTransacoes hook
+    if (filters.projectItemId) query = query.eq('project_item_id', filters.projectItemId);
+    if (filters.expenseId) query = query.eq('expense_id', filters.expenseId);
+    if (filters.excluirTransferencias) query = query.eq('is_transferencia', false);
+    if (filters.bancoId) query = query.eq('banco_id', filters.bancoId);
+    if (filters.busca) query = query.ilike('descricao', `%${filters.busca}%`);
+    return query;
+  }
+
+  async createTransacao(data: Omit<Transacao, 'id' | 'createdAt'>): Promise<Transacao> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    const { data: created, error } = await supabase.from('transacoes').insert({
+      user_id: user.id,
+      descricao: data.descricao,
+      valor: data.valor,
+      tipo: data.tipo,
+      categoria: data.categoria,
+      metodo_pagamento: data.metodoPagamento,
+      data_transacao: data.dataTransacao,
+      expense_id: data.expenseId ?? null,
+      project_item_id: data.projectItemId ?? null,
+      importacao_id: data.importacaoId ?? null,
+      banco_id: data.bancoId ?? null,
+      is_transferencia: data.isTransferencia ?? false,
+      transferencia_par_id: data.transferenciaPar ?? null,
+    }).select().single();
+
+    if (error) throw error;
+    return mapTransacao(created as Record<string, unknown>);
+  }
+
+  async updateTransacao(id: string, data: Partial<Omit<Transacao, 'id' | 'createdAt'>>): Promise<Transacao> {
+    const updateData: Record<string, unknown> = {};
+    if (data.descricao !== undefined) updateData.descricao = data.descricao;
+    if (data.valor !== undefined) updateData.valor = data.valor;
+    if (data.tipo !== undefined) updateData.tipo = data.tipo;
+    if (data.categoria !== undefined) updateData.categoria = data.categoria;
+    if (data.metodoPagamento !== undefined) updateData.metodo_pagamento = data.metodoPagamento;
+    if (data.dataTransacao !== undefined) updateData.data_transacao = data.dataTransacao;
+    if (data.expenseId !== undefined) updateData.expense_id = data.expenseId;
+    if (data.projectItemId !== undefined) updateData.project_item_id = data.projectItemId;
+    if (data.isTransferencia !== undefined) updateData.is_transferencia = data.isTransferencia;
+    if (data.bancoId !== undefined) updateData.banco_id = data.bancoId;
+
+    const { data: updated, error } = await supabase
+      .from('transacoes').update(updateData).eq('id', id).select().single();
+    if (error) throw error;
+    return mapTransacao(updated as Record<string, unknown>);
+  }
+
+  async deleteTransacao(id: string): Promise<void> {
+    const { error } = await supabase.from('transacoes').delete().eq('id', id);
+    if (error) throw error;
+  }
+
+  async getTransacoesByProjetoItem(projectItemId: string): Promise<Transacao[]> {
+    const { data, error } = await supabase
+      .from('transacoes')
+      .select('*')
+      .eq('project_item_id', projectItemId)
+      .order('data_transacao', { ascending: false });
+    if (error) throw error;
+    return (data ?? []).map(r => mapTransacao(r as Record<string, unknown>));
+  }
+
+  async toggleProjetoItemCompleted(itemId: string, isCompleted: boolean): Promise<void> {
+    const { error } = await supabase
+      .from('projeto_itens')
+      .update({ is_completed: isCompleted })
+      .eq('id', itemId);
+    if (error) throw error;
+  }
+
+  // ─── Bancos ──────────────────────────────────────────
+  async getBancos(): Promise<Banco[]> {
+    const { data, error } = await supabase
+      .from('bancos')
+      .select('*')
+      .order('nome', { ascending: true });
+    if (error) throw error;
+    return (data ?? []).map(r => mapBanco(r as Record<string, unknown>));
+  }
+
+  async createBanco(payload: { nome: string; tipo: BancoTipo }): Promise<Banco> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+    const { data, error } = await supabase
+      .from('bancos')
+      .insert({ user_id: user.id, nome: payload.nome, tipo: payload.tipo })
+      .select()
+      .single();
+    if (error) throw error;
+    return mapBanco(data as Record<string, unknown>);
   }
 
   // ─── Transferências Internas ────────────────────────
@@ -388,40 +556,42 @@ class ApiService {
 
   async confirmarImportacao(
     importacaoId: string,
-    approvedItems: Omit<Conta, 'id'>[]
+    approvedItems: Omit<Transacao, 'id' | 'createdAt'>[],
+    bancoId?: string
   ): Promise<{ imported: number; skipped: number }> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
+    const importacaoUpdate: Record<string, unknown> = {
+      status: 'concluido',
+      total_importadas: approvedItems.length,
+    };
+    if (bancoId) importacaoUpdate.banco_id = bancoId;
+
     if (approvedItems.length === 0) {
-      await supabase.from('importacoes').update({ status: 'concluido', total_importadas: 0 }).eq('id', importacaoId);
+      await supabase.from('importacoes').update(importacaoUpdate).eq('id', importacaoId);
       return { imported: 0, skipped: 0 };
     }
 
     const rows = approvedItems.map(item => ({
       user_id: user.id,
       descricao: item.descricao,
-      categoria: item.categoria,
       valor: item.valor,
       tipo: item.tipo,
-      dia_vencimento: item.diaVencimento,
-      paga: item.paga,
-      mes: item.mes,
-      ano: item.ano,
-      metodo_pagamento: item.metodoPagamento ?? null,
-      data_pagamento: item.dataPagamento ?? null,
-      projeto_id: item.projetoId ?? null,
-      is_transferencia: item.isTransferencia ?? false,
+      categoria: item.categoria,
+      metodo_pagamento: item.metodoPagamento ?? 'outros',
+      data_transacao: item.dataTransacao,
+      expense_id: item.expenseId ?? null,
+      project_item_id: item.projectItemId ?? null,
       importacao_id: importacaoId,
+      is_transferencia: item.isTransferencia ?? false,
+      banco_id: bancoId ?? null,
     }));
 
-    const { error } = await supabase.from('contas').insert(rows);
+    const { error } = await supabase.from('transacoes').insert(rows);
     if (error) throw error;
 
-    await supabase
-      .from('importacoes')
-      .update({ status: 'concluido', total_importadas: approvedItems.length })
-      .eq('id', importacaoId);
+    await supabase.from('importacoes').update(importacaoUpdate).eq('id', importacaoId);
 
     return { imported: approvedItems.length, skipped: 0 };
   }
@@ -436,8 +606,8 @@ class ApiService {
   }
 
   async deleteImportacao(id: string): Promise<void> {
-    // Deleta as contas vinculadas antes
-    await supabase.from('contas').delete().eq('importacao_id', id);
+    // Deleta as transações vinculadas antes
+    await supabase.from('transacoes').delete().eq('importacao_id', id);
     const { error } = await supabase.from('importacoes').delete().eq('id', id);
     if (error) throw error;
   }

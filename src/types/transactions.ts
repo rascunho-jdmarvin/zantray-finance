@@ -1,4 +1,4 @@
-import type { ContaCategoria, MetodoPagamento } from '@/types';
+import type { ContaCategoria, MetodoPagamento, TransacaoTipo } from '@/types';
 
 export interface PaginationState {
   page: number;
@@ -10,9 +10,10 @@ export interface PaginationInfo extends PaginationState {
   totalPages: number;
 }
 
-export interface TransacoesFiltros {
-  dataInicio?: string;      // ISO date YYYY-MM-DD
-  dataFim?: string;         // ISO date YYYY-MM-DD
+// Filtros para a tabela contas (Despesas — mantido para compatibilidade)
+export interface ContasFiltros {
+  dataInicio?: string;
+  dataFim?: string;
   categorias?: ContaCategoria[];
   metodosPagamento?: MetodoPagamento[];
   status?: 'paga' | 'pendente' | 'todas';
@@ -20,6 +21,27 @@ export interface TransacoesFiltros {
   somenteTransferencias?: boolean;
   excluirTransferencias?: boolean;
   busca?: string;
+}
+
+// Filtros para a tabela transacoes (Extrato Real)
+export interface TransacoesFiltros {
+  dataInicio?: string;      // ISO date YYYY-MM-DD
+  dataFim?: string;         // ISO date YYYY-MM-DD
+  tipo?: TransacaoTipo | 'todas';
+  categorias?: ContaCategoria[];
+  metodosPagamento?: MetodoPagamento[];
+  projetoId?: string;
+  projectItemId?: string;
+  expenseId?: string;
+  excluirTransferencias?: boolean;
+  busca?: string;
+  bancoId?: string;
+}
+
+export interface ExtratoSumario {
+  totalReceitas: number;
+  totalDespesas: number;
+  saldo: number;
 }
 
 export type DateRangePreset = 'mes_atual' | 'mes_passado' | 'ano_atual' | 'personalizado';

@@ -19,6 +19,23 @@ export const METODO_PAGAMENTO_LABELS: Record<MetodoPagamento, string> = {
   outros: 'Outros',
 };
 
+// ─── Banco (Conta Bancária / Cartão) ─────────────
+export type BancoTipo = 'corrente' | 'poupanca' | 'credito' | 'investimento';
+
+export const BANCO_TIPO_LABELS: Record<BancoTipo, string> = {
+  corrente: 'Conta Corrente',
+  poupanca: 'Poupança',
+  credito: 'Cartão de Crédito',
+  investimento: 'Investimento',
+};
+
+export interface Banco {
+  id: string;
+  nome: string;
+  tipo: BancoTipo;
+  createdAt: string;
+}
+
 export interface Conta {
   id: string;
   descricao: string;
@@ -47,6 +64,7 @@ export interface Importacao {
   totalImportadas: number;
   totalDuplicatas: number;
   createdAt: string;
+  bancoId?: string;
 }
 
 export interface TransacaoImportada {
@@ -55,7 +73,7 @@ export interface TransacaoImportada {
   data: string; // ISO date
   categoria: ContaCategoria;
   metodoPagamento: MetodoPagamento;
-  tipo: 'fixa' | 'variavel';
+  tipo: 'fixa' | 'variavel' | TransacaoTipo;
   possivelDuplicata: boolean;
   duplicataDeId?: string;
   confiancaCategoria: number; // 0-1
@@ -132,13 +150,34 @@ export interface Analise {
 
 export type StatusClassificacao = Analise['classificacao'];
 
+// ─── Transações (Extrato Real) ────────────────────
+export type TransacaoTipo = 'entrada' | 'saida';
+
+export interface Transacao {
+  id: string;
+  descricao: string;
+  valor: number;
+  tipo: TransacaoTipo;
+  categoria: ContaCategoria;
+  metodoPagamento: MetodoPagamento;
+  dataTransacao: string; // ISO date YYYY-MM-DD
+  expenseId?: string;    // linked conta (despesa planejada)
+  projectItemId?: string;
+  importacaoId?: string;
+  bancoId?: string;
+  isTransferencia: boolean;
+  transferenciaPar?: string;
+  createdAt: string;
+}
+
 // ─── Projetos ─────────────────────────────────────
 export interface ProjetoItem {
   id: string;
   descricao: string;
   valorEstimado: number;
   categoria: ContaCategoria;
-  contaId?: string; // linked conta
+  contaId?: string; // linked conta (legacy)
+  isCompleted: boolean;
 }
 
 export interface Projeto {

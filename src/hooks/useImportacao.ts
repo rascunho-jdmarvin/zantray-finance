@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import { api } from '@/services/api';
-import type { TransacaoImportada } from '@/types';
-import type { Conta } from '@/types';
+import type { TransacaoImportada, Transacao, TransacaoTipo } from '@/types';
 
 export type ImportStep = 'idle' | 'uploading' | 'reviewing' | 'confirming' | 'done';
 
@@ -11,6 +10,7 @@ export interface ItemRevisao extends TransacaoImportada {
   // Campos editáveis pelo usuário na tela de revisão
   descricaoEditada?: string;
   categoriaEditada?: TransacaoImportada['categoria'];
+  tipoEditado?: TransacaoTipo; // override entrada/saida
   projetoId?: string;
   isTransferencia?: boolean;
 }
@@ -21,6 +21,7 @@ interface UseImportacaoState {
   itens: ItemRevisao[];
   arquivo: File | null;
   resultado: { imported: number; skipped: number } | null;
+  bancoId: string | null;
 }
 
 export function useImportacao(onSuccess?: () => void) {
@@ -30,6 +31,7 @@ export function useImportacao(onSuccess?: () => void) {
     itens: [],
     arquivo: null,
     resultado: null,
+    bancoId: null,
   });
 
   const iniciar = useCallback(async (file: File) => {
@@ -70,32 +72,43 @@ export function useImportacao(onSuccess?: () => void) {
     }));
   }, []);
 
+  const setBancoId = useCallback((id: string | null) => {
+    setState(prev => ({ ...prev, bancoId: id }));
+  }, []);
+
   const confirmar = useCallback(async () => {
     if (!state.importacaoId) return;
     setState(prev => ({ ...prev, step: 'confirming' }));
 
     try {
       const aprovados = state.itens.filter(i => i.aprovado);
-      const contas: Omit<Conta, 'id'>[] = aprovados.map(item => {
-        const data = new Date(item.data);
+      const transacoes: Omit<Transacao, 'id' | 'createdAt'>[] = aprovados.map(item => {
+        // Normalize tipo: legacy 'fixa'/'variavel' values default to 'saida'
+        const tipoFinal: TransacaoTipo =
+          item.tipoEditado ??
+          (item.tipo === 'entrada' ? 'entrada' : 'saida');
+
         return {
           descricao: item.descricaoEditada ?? item.descricao,
           categoria: item.categoriaEditada ?? item.categoria,
           valor: item.valor,
-          tipo: item.tipo,
-          diaVencimento: data.getDate(),
-          paga: false,
-          mes: data.getMonth() + 1,
-          ano: data.getFullYear(),
+          tipo: tipoFinal,
           metodoPagamento: item.metodoPagamento,
-          dataPagamento: item.data,
-          projetoId: item.projetoId,
-          isTransferencia: item.isTransferencia ?? false,
+          dataTransacao: item.data,
+          expenseId: undefined,
+          projectItemId: undefined,
           importacaoId: state.importacaoId!,
+          bancoId: state.bancoId ?? undefined,
+          isTransferencia: item.isTransferencia ?? false,
+          transferenciaPar: undefined,
         };
       });
 
-      const resultado = await api.confirmarImportacao(state.importacaoId, contas);
+      const resultado = await api.confirmarImportacao(
+        state.importacaoId,
+        transacoes,
+        state.bancoId ?? undefined
+      );
       setState(prev => ({ ...prev, step: 'done', resultado }));
       toast.success(`${resultado.imported} transações importadas com sucesso!`);
       onSuccess?.();
@@ -104,7 +117,7 @@ export function useImportacao(onSuccess?: () => void) {
       setState(prev => ({ ...prev, step: 'reviewing' }));
       console.error(err);
     }
-  }, [state.importacaoId, state.itens, onSuccess]);
+  }, [state.importacaoId, state.itens, state.bancoId, onSuccess]);
 
   const reiniciar = useCallback(() => {
     setState({
@@ -113,6 +126,7 @@ export function useImportacao(onSuccess?: () => void) {
       itens: [],
       arquivo: null,
       resultado: null,
+      bancoId: null,
     });
   }, []);
 
@@ -129,5 +143,6 @@ export function useImportacao(onSuccess?: () => void) {
     aprovarTodos,
     confirmar,
     reiniciar,
+    setBancoId,
   };
 }

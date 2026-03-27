@@ -13,7 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 import { useApp } from '@/contexts/AppContext';
-import { CATEGORIA_LABELS, METODO_PAGAMENTO_LABELS, type ContaCategoria, type MetodoPagamento } from '@/types';
+import { CATEGORIA_LABELS, METODO_PAGAMENTO_LABELS, type ContaCategoria, type MetodoPagamento, type Banco } from '@/types';
 import type { TransacoesFiltros, DateRangePreset } from '@/types/transactions';
 
 interface FiltrosBarProps {
@@ -21,6 +21,7 @@ interface FiltrosBarProps {
   onFiltrosChange: (f: TransacoesFiltros) => void;
   onClear: () => void;
   hasActive: boolean;
+  bancos?: Banco[];
 }
 
 function getPresetRange(preset: DateRangePreset): { inicio: string; fim: string } {
@@ -39,7 +40,6 @@ function getPresetRange(preset: DateRangePreset): { inicio: string; fim: string 
       fim: fmt(new Date(now.getFullYear(), now.getMonth(), 0)),
     };
   }
-  // ano_atual
   return {
     inicio: fmt(new Date(now.getFullYear(), 0, 1)),
     fim: fmt(new Date(now.getFullYear(), 11, 31)),
@@ -49,7 +49,7 @@ function getPresetRange(preset: DateRangePreset): { inicio: string; fim: string 
 const CATEGORIAS = Object.entries(CATEGORIA_LABELS) as [ContaCategoria, string][];
 const METODOS = Object.entries(METODO_PAGAMENTO_LABELS) as [MetodoPagamento, string][];
 
-export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActive }: FiltrosBarProps) {
+export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActive, bancos }: FiltrosBarProps) {
   const { projetos } = useApp();
   const [dateOpen, setDateOpen] = useState(false);
   const [catOpen, setCatOpen] = useState(false);
@@ -145,6 +145,21 @@ export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActiv
           </PopoverContent>
         </Popover>
 
+        {/* Tipo entrada/saída */}
+        <Select
+          value={filtros.tipo ?? 'todas'}
+          onValueChange={v => onFiltrosChange({ ...filtros, tipo: v as TransacoesFiltros['tipo'] })}
+        >
+          <SelectTrigger className="h-8 w-36 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="todas">Entradas e saídas</SelectItem>
+            <SelectItem value="entrada">Só entradas</SelectItem>
+            <SelectItem value="saida">Só saídas</SelectItem>
+          </SelectContent>
+        </Select>
+
         {/* Categorias */}
         <Popover open={catOpen} onOpenChange={setCatOpen}>
           <PopoverTrigger asChild>
@@ -161,10 +176,7 @@ export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActiv
               {CATEGORIAS.map(([key, label]) => (
                 <div key={key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-accent cursor-pointer"
                   onClick={() => toggleCategoria(key)}>
-                  <Checkbox
-                    checked={filtros.categorias?.includes(key) ?? false}
-                    onCheckedChange={() => toggleCategoria(key)}
-                  />
+                  <Checkbox checked={filtros.categorias?.includes(key) ?? false} onCheckedChange={() => toggleCategoria(key)} />
                   <Label className="cursor-pointer text-sm">{label}</Label>
                 </div>
               ))}
@@ -188,31 +200,13 @@ export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActiv
               {METODOS.map(([key, label]) => (
                 <div key={key} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-accent cursor-pointer"
                   onClick={() => toggleMetodo(key)}>
-                  <Checkbox
-                    checked={filtros.metodosPagamento?.includes(key) ?? false}
-                    onCheckedChange={() => toggleMetodo(key)}
-                  />
+                  <Checkbox checked={filtros.metodosPagamento?.includes(key) ?? false} onCheckedChange={() => toggleMetodo(key)} />
                   <Label className="cursor-pointer text-sm">{label}</Label>
                 </div>
               ))}
             </div>
           </PopoverContent>
         </Popover>
-
-        {/* Status */}
-        <Select
-          value={filtros.status ?? 'todas'}
-          onValueChange={v => onFiltrosChange({ ...filtros, status: v as TransacoesFiltros['status'] })}
-        >
-          <SelectTrigger className="h-8 w-32 text-xs">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="todas">Todas</SelectItem>
-            <SelectItem value="paga">Pagas</SelectItem>
-            <SelectItem value="pendente">Pendentes</SelectItem>
-          </SelectContent>
-        </Select>
 
         {/* Projeto */}
         {projetos.length > 0 && (
@@ -226,7 +220,27 @@ export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActiv
             <SelectContent>
               <SelectItem value="__todos__">Todos projetos</SelectItem>
               {projetos.map(p => (
-                <SelectItem key={p.id} value={p.id}>{(p as { nome?: string; titulo?: string }).nome ?? (p as { titulo?: string }).titulo}</SelectItem>
+                <SelectItem key={p.id} value={p.id}>
+                  {(p as { nome?: string }).nome ?? p.id}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+
+        {/* Banco */}
+        {bancos && bancos.length > 0 && (
+          <Select
+            value={filtros.bancoId ?? '__todos__'}
+            onValueChange={v => onFiltrosChange({ ...filtros, bancoId: v === '__todos__' ? undefined : v })}
+          >
+            <SelectTrigger className={`h-8 w-40 text-xs ${filtros.bancoId ? 'border-primary' : ''}`}>
+              <SelectValue placeholder="Banco" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__todos__">Todos os bancos</SelectItem>
+              {bancos.map(b => (
+                <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -263,6 +277,12 @@ export default function FiltrosBar({ filtros, onFiltrosChange, onClear, hasActiv
               <X className="w-3 h-3 cursor-pointer" onClick={() => toggleMetodo(m)} />
             </Badge>
           ))}
+          {filtros.bancoId && bancos && (
+            <Badge variant="secondary" className="gap-1 text-xs">
+              {bancos.find(b => b.id === filtros.bancoId)?.nome ?? 'Banco'}
+              <X className="w-3 h-3 cursor-pointer" onClick={() => onFiltrosChange({ ...filtros, bancoId: undefined })} />
+            </Badge>
+          )}
         </div>
       )}
     </div>

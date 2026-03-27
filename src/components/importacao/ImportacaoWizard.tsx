@@ -12,7 +12,8 @@ import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useImportacao } from '@/hooks/useImportacao';
-import { CATEGORIA_LABELS, METODO_PAGAMENTO_LABELS, type ContaCategoria } from '@/types';
+import { useBancos } from '@/hooks/useBancos';
+import { CATEGORIA_LABELS, METODO_PAGAMENTO_LABELS, BANCO_TIPO_LABELS, type ContaCategoria, type BancoTipo, type TransacaoTipo } from '@/types';
 import { formatCurrency } from '@/utils/format';
 import { useApp } from '@/contexts/AppContext';
 import { cn } from '@/lib/utils';
@@ -24,10 +25,20 @@ interface ImportacaoWizardProps {
 export default function ImportacaoWizard({ onComplete }: ImportacaoWizardProps) {
   const { projetos, refreshData } = useApp();
   const [showTips, setShowTips] = useState(false);
-  const { step, arquivo, itens, resultado, totalAprovados, totalDuplicatas, iniciar, aprovarItem, editarItem, aprovarTodos, confirmar, reiniciar } = useImportacao(async () => {
+  const [showNovoBanco, setShowNovoBanco] = useState(false);
+  const [novoBancoNome, setNovoBancoNome] = useState('');
+  const [novoBancoTipo, setNovoBancoTipo] = useState<BancoTipo>('corrente');
+
+  const {
+    step, arquivo, itens, resultado, totalAprovados, totalDuplicatas,
+    bancoId, setBancoId,
+    iniciar, aprovarItem, editarItem, aprovarTodos, confirmar, reiniciar,
+  } = useImportacao(async () => {
     await refreshData();
     onComplete?.();
   });
+
+  const { bancos, createBanco, isCreating } = useBancos();
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) iniciar(accepted[0]);
@@ -137,6 +148,70 @@ export default function ImportacaoWizard({ onComplete }: ImportacaoWizardProps) 
           </div>
         </div>
 
+        {/* Seletor de banco */}
+        <div className="flex items-center gap-3 flex-wrap p-3 rounded-lg border border-border bg-muted/30">
+          <span className="text-sm font-medium text-foreground">Banco / Cartão:</span>
+          {!showNovoBanco ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Select value={bancoId ?? '__none__'} onValueChange={v => setBancoId(v === '__none__' ? null : v)}>
+                <SelectTrigger className="h-8 w-52 text-sm">
+                  <SelectValue placeholder="Selecionar banco (opcional)" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Nenhum</SelectItem>
+                  {bancos.map(b => (
+                    <SelectItem key={b.id} value={b.id}>{b.nome}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button variant="ghost" size="sm" className="h-8 text-xs text-primary"
+                onClick={() => setShowNovoBanco(true)}>
+                + Criar novo
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 flex-wrap">
+              <Input
+                className="h-8 w-40 text-sm"
+                placeholder="Nome do banco"
+                value={novoBancoNome}
+                onChange={e => setNovoBancoNome(e.target.value)}
+                autoFocus
+              />
+              <Select value={novoBancoTipo} onValueChange={v => setNovoBancoTipo(v as BancoTipo)}>
+                <SelectTrigger className="h-8 w-40 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(BANCO_TIPO_LABELS).map(([k, v]) => (
+                    <SelectItem key={k} value={k}>{v}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Button size="sm" className="h-8 text-xs"
+                disabled={!novoBancoNome.trim() || isCreating}
+                onClick={async () => {
+                  const created = await createBanco({ nome: novoBancoNome.trim(), tipo: novoBancoTipo });
+                  setBancoId(created.id);
+                  setShowNovoBanco(false);
+                  setNovoBancoNome('');
+                  setNovoBancoTipo('corrente');
+                }}>
+                {isCreating ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Salvar'}
+              </Button>
+              <Button variant="ghost" size="sm" className="h-8 text-xs"
+                onClick={() => { setShowNovoBanco(false); setNovoBancoNome(''); }}>
+                Cancelar
+              </Button>
+            </div>
+          )}
+          {bancoId && !showNovoBanco && (
+            <span className="text-xs text-muted-foreground">
+              Extrato vinculado a: <strong>{bancos.find(b => b.id === bancoId)?.nome}</strong>
+            </span>
+          )}
+        </div>
+
         {totalDuplicatas > 0 && (
           <div className="flex items-center gap-2 text-sm text-amber-600 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 rounded-lg px-4 py-2.5">
             <AlertTriangle className="w-4 h-4 shrink-0" />
@@ -156,6 +231,7 @@ export default function ImportacaoWizard({ onComplete }: ImportacaoWizardProps) 
                 </TableHead>
                 <TableHead className="w-28">Data</TableHead>
                 <TableHead>Descrição</TableHead>
+                <TableHead className="w-28">Tipo</TableHead>
                 <TableHead className="w-36">Categoria</TableHead>
                 <TableHead className="w-32">Pagamento</TableHead>
                 <TableHead className="w-40">Projeto</TableHead>
@@ -193,6 +269,21 @@ export default function ImportacaoWizard({ onComplete }: ImportacaoWizardProps) 
                         disabled={!item.aprovado}
                       />
                     </div>
+                  </TableCell>
+                  <TableCell>
+                    <Select
+                      value={item.tipoEditado ?? (item.tipo === 'entrada' ? 'entrada' : 'saida')}
+                      onValueChange={v => editarItem(index, { tipoEditado: v as TransacaoTipo })}
+                      disabled={!item.aprovado}
+                    >
+                      <SelectTrigger className="h-7 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="saida">Saída</SelectItem>
+                        <SelectItem value="entrada">Entrada</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </TableCell>
                   <TableCell>
                     <Select

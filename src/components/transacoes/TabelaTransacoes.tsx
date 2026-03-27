@@ -1,55 +1,42 @@
 import { useState } from 'react';
-import { Edit2, Trash2, Check, ArrowLeftRight, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Edit2, Trash2, ArrowDownLeft, ArrowUpRight, ArrowLeftRight, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useApp } from '@/contexts/AppContext';
+import { useQueryClient } from '@tanstack/react-query';
+import { api } from '@/services/api';
 import { formatCurrency } from '@/utils/format';
-import {
-  CATEGORIA_LABELS, METODO_PAGAMENTO_LABELS,
-  type Conta, type ContaCategoria, type MetodoPagamento,
-} from '@/types';
-import { DESPESA_CATEGORIA_LABELS, DESPESA_CATEGORIA_ICONS } from '@/types/finance';
+import { CATEGORIA_LABELS, METODO_PAGAMENTO_LABELS, CATEGORIA_ICONS, type ContaCategoria, type MetodoPagamento, type Transacao, type Banco } from '@/types';
 import type { PaginationInfo } from '@/types/transactions';
 
 interface TabelaTransacoesProps {
-  transacoes: Conta[];
+  transacoes: Transacao[];
   paginacao?: PaginationInfo;
   isLoading: boolean;
   isFetching: boolean;
   onPageChange: (page: number) => void;
   onRefresh: () => void;
+  bancos?: Banco[];
 }
 
-const ALL_CATEGORIAS = { ...DESPESA_CATEGORIA_LABELS };
-const getCatLabel = (c: string) =>
-  (ALL_CATEGORIAS as Record<string, string>)[c] ?? CATEGORIA_LABELS[c as ContaCategoria] ?? c;
-const getCatIcon = (c: string) =>
-  (DESPESA_CATEGORIA_ICONS as Record<string, string>)[c] ?? '📦';
-
-function EditDialog({
-  conta,
-  onClose,
-}: {
-  conta: Conta;
-  onClose: () => void;
-}) {
-  const { updateConta, projetos } = useApp();
+function EditDialog({ transacao, onClose }: { transacao: Transacao; onClose: () => void }) {
+  const { projetos } = useApp();
+  const qc = useQueryClient();
   const [form, setForm] = useState({
-    descricao: conta.descricao,
-    valor: conta.valor,
-    categoria: conta.categoria as string,
-    metodoPagamento: conta.metodoPagamento ?? 'outros',
-    projetoId: conta.projetoId ?? '',
-    isTransferencia: conta.isTransferencia ?? false,
+    descricao: transacao.descricao,
+    valor: transacao.valor,
+    tipo: transacao.tipo,
+    categoria: transacao.categoria as string,
+    metodoPagamento: transacao.metodoPagamento,
+    dataTransacao: transacao.dataTransacao,
+    isTransferencia: transacao.isTransferencia,
   });
   const [saving, setSaving] = useState(false);
 
@@ -60,14 +47,17 @@ function EditDialog({
     }
     setSaving(true);
     try {
-      await updateConta(conta.id, {
+      await api.updateTransacao(transacao.id, {
         descricao: form.descricao,
         valor: form.valor,
+        tipo: form.tipo,
         categoria: form.categoria as ContaCategoria,
         metodoPagamento: form.metodoPagamento as MetodoPagamento,
-        projetoId: form.projetoId || undefined,
+        dataTransacao: form.dataTransacao,
         isTransferencia: form.isTransferencia,
       });
+      await qc.invalidateQueries({ queryKey: ['extrato'] });
+      await qc.invalidateQueries({ queryKey: ['extrato-sumario'] });
       toast.success('Transação atualizada.');
       onClose();
     } catch {
@@ -90,16 +80,29 @@ function EditDialog({
         <div className="grid grid-cols-2 gap-3">
           <div>
             <Label>Valor (R$)</Label>
-            <Input
-              type="number"
-              step="0.01"
-              value={form.valor}
-              onChange={e => setForm(f => ({ ...f, valor: parseFloat(e.target.value) || 0 }))}
-            />
+            <Input type="number" step="0.01" value={form.valor}
+              onChange={e => setForm(f => ({ ...f, valor: parseFloat(e.target.value) || 0 }))} />
+          </div>
+          <div>
+            <Label>Data</Label>
+            <Input type="date" value={form.dataTransacao}
+              onChange={e => setForm(f => ({ ...f, dataTransacao: e.target.value }))} />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <Label>Tipo</Label>
+            <Select value={form.tipo} onValueChange={v => setForm(f => ({ ...f, tipo: v as Transacao['tipo'] }))}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="saida">Saída (Despesa)</SelectItem>
+                <SelectItem value="entrada">Entrada (Receita)</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <div>
             <Label>Meio de Pagamento</Label>
-            <Select value={form.metodoPagamento} onValueChange={v => setForm(f => ({ ...f, metodoPagamento: v }))}>
+            <Select value={form.metodoPagamento} onValueChange={v => setForm(f => ({ ...f, metodoPagamento: v as MetodoPagamento }))}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {Object.entries(METODO_PAGAMENTO_LABELS).map(([k, v]) => (
@@ -114,38 +117,22 @@ function EditDialog({
           <Select value={form.categoria} onValueChange={v => setForm(f => ({ ...f, categoria: v }))}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
-              {Object.entries(getCatLabel).length > 0 && Object.entries(ALL_CATEGORIAS).map(([k, v]) => (
-                <SelectItem key={k} value={k}>{getCatIcon(k)} {v}</SelectItem>
+              {Object.entries(CATEGORIA_LABELS).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{CATEGORIA_ICONS[k as ContaCategoria]} {v}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label>Projeto (opcional)</Label>
-          <Select
-            value={form.projetoId || '__none__'}
-            onValueChange={v => setForm(f => ({ ...f, projetoId: v === '__none__' ? '' : v }))}
-          >
-            <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">Nenhum</SelectItem>
-              {projetos.map(p => (
-                <SelectItem key={p.id} value={p.id}>
-                  {(p as { nome?: string; titulo?: string }).nome ?? (p as { titulo?: string }).titulo}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        {projetos.length > 0 && (
+          <div className="text-xs text-muted-foreground">
+            Para vincular a um projeto, use a tela de Projetos.
+          </div>
+        )}
         <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="isTransf"
-            checked={form.isTransferencia}
+          <input type="checkbox" id="isTransf" checked={form.isTransferencia}
             onChange={e => setForm(f => ({ ...f, isTransferencia: e.target.checked }))}
-            className="rounded border-border"
-          />
-          <Label htmlFor="isTransf" className="cursor-pointer text-sm">Transferência Interna (não conta nos gastos)</Label>
+            className="rounded border-border" />
+          <Label htmlFor="isTransf" className="cursor-pointer text-sm">Transferência interna (não conta nos totais)</Label>
         </div>
       </div>
       <DialogFooter>
@@ -160,32 +147,23 @@ function EditDialog({
 }
 
 export default function TabelaTransacoes({
-  transacoes, paginacao, isLoading, isFetching, onPageChange, onRefresh,
+  transacoes, paginacao, isLoading, isFetching, onPageChange, onRefresh, bancos,
 }: TabelaTransacoesProps) {
-  const { togglePaga, deleteConta, projetos } = useApp();
-  const [editando, setEditando] = useState<Conta | null>(null);
+  const qc = useQueryClient();
+  const [editando, setEditando] = useState<Transacao | null>(null);
 
   const handleDelete = async (id: string, descricao: string) => {
     if (!confirm(`Deletar "${descricao}"?`)) return;
     try {
-      await deleteConta(id);
+      await api.deleteTransacao(id);
+      await qc.invalidateQueries({ queryKey: ['extrato'] });
+      await qc.invalidateQueries({ queryKey: ['extrato-sumario'] });
       toast.success('Transação excluída.');
       onRefresh();
     } catch {
       toast.error('Erro ao excluir transação.');
     }
   };
-
-  const handleToggle = async (id: string) => {
-    try {
-      await togglePaga(id);
-    } catch {
-      toast.error('Erro ao atualizar pagamento.');
-    }
-  };
-
-  const getProjeto = (projetoId?: string) =>
-    projetoId ? projetos.find(p => p.id === projetoId) : null;
 
   if (isLoading) {
     return (
@@ -201,6 +179,7 @@ export default function TabelaTransacoes({
     return (
       <div className="text-center py-16 text-muted-foreground">
         <p className="text-sm">Nenhuma transação encontrada com os filtros aplicados.</p>
+        <p className="text-xs mt-1 opacity-60">Importe um extrato ou registre transações manualmente.</p>
       </div>
     );
   }
@@ -217,32 +196,44 @@ export default function TabelaTransacoes({
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/40">
-                <TableHead className="w-24">Data</TableHead>
+                <TableHead className="w-28">Data</TableHead>
                 <TableHead>Descrição</TableHead>
                 <TableHead className="hidden md:table-cell">Categoria</TableHead>
                 <TableHead className="hidden lg:table-cell">Pagamento</TableHead>
-                <TableHead className="hidden lg:table-cell">Projeto</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
-                <TableHead className="w-28 text-center">Status</TableHead>
                 <TableHead className="w-24" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {transacoes.map(t => {
-                const projeto = getProjeto(t.projetoId);
-                const dataDisplay = `${String(t.diaVencimento).padStart(2, '0')}/${String(t.mes).padStart(2, '0')}/${t.ano}`;
+                const isEntrada = t.tipo === 'entrada';
+                const dataFmt = t.dataTransacao
+                  ? new Date(t.dataTransacao + 'T00:00').toLocaleDateString('pt-BR')
+                  : '—';
 
                 return (
                   <TableRow key={t.id} className={t.isTransferencia ? 'opacity-60 bg-muted/20' : ''}>
-                    <TableCell className="text-xs text-muted-foreground font-mono">{dataDisplay}</TableCell>
+                    <TableCell className="text-xs text-muted-foreground font-mono">{dataFmt}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-base">{getCatIcon(t.categoria)}</span>
+                        <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+                          t.isTransferencia ? 'bg-muted' : isEntrada ? 'bg-green-500/15' : 'bg-red-500/15'
+                        }`}>
+                          {t.isTransferencia
+                            ? <ArrowLeftRight className="w-3 h-3 text-muted-foreground" />
+                            : isEntrada
+                              ? <ArrowDownLeft className="w-3 h-3 text-green-600" />
+                              : <ArrowUpRight className="w-3 h-3 text-red-500" />
+                          }
+                        </div>
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate max-w-[200px]">{t.descricao}</p>
                           {t.isTransferencia && (
-                            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                              <ArrowLeftRight className="w-3 h-3" /> Transferência
+                            <span className="text-xs text-muted-foreground">Transferência interna</span>
+                          )}
+                          {t.bancoId && bancos && (
+                            <span className="text-xs text-muted-foreground">
+                              {bancos.find(b => b.id === t.bancoId)?.nome}
                             </span>
                           )}
                         </div>
@@ -250,48 +241,25 @@ export default function TabelaTransacoes({
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
                       <Badge variant="outline" className="text-xs font-normal">
-                        {getCatLabel(t.categoria)}
+                        {CATEGORIA_ICONS[t.categoria]} {CATEGORIA_LABELS[t.categoria] ?? t.categoria}
                       </Badge>
                     </TableCell>
                     <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {t.metodoPagamento ? METODO_PAGAMENTO_LABELS[t.metodoPagamento] : '—'}
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell">
-                      {projeto && (
-                        <Badge variant="secondary" className="text-xs max-w-[120px] truncate">
-                          {(projeto as { nome?: string; titulo?: string }).nome ?? (projeto as { titulo?: string }).titulo}
-                        </Badge>
-                      )}
+                      {METODO_PAGAMENTO_LABELS[t.metodoPagamento] ?? t.metodoPagamento ?? '—'}
                     </TableCell>
                     <TableCell className="text-right font-semibold text-sm whitespace-nowrap">
-                      {formatCurrency(t.valor)}
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <Button
-                        size="sm"
-                        variant={t.paga ? 'default' : 'outline'}
-                        className="h-6 px-2 text-xs"
-                        onClick={() => handleToggle(t.id)}
-                      >
-                        {t.paga ? <><Check className="w-3 h-3 mr-1" />Pago</> : 'Pendente'}
-                      </Button>
+                      <span className={isEntrada ? 'text-green-600' : ''}>
+                        {isEntrada ? '+' : '-'}{formatCurrency(t.valor)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1 justify-end">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
-                          onClick={() => setEditando(t)}
-                        >
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
+                          onClick={() => setEditando(t)}>
                           <Edit2 className="w-3.5 h-3.5" />
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 w-7 p-0 text-destructive"
-                          onClick={() => handleDelete(t.id, t.descricao)}
-                        >
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive"
+                          onClick={() => handleDelete(t.id, t.descricao)}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </Button>
                       </div>
@@ -311,30 +279,21 @@ export default function TabelaTransacoes({
             {paginacao.totalCount} transações · Página {paginacao.page + 1} de {paginacao.totalPages}
           </p>
           <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={paginacao.page === 0}
-              onClick={() => onPageChange(paginacao.page - 1)}
-            >
+            <Button variant="outline" size="sm" disabled={paginacao.page === 0}
+              onClick={() => onPageChange(paginacao.page - 1)}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={paginacao.page >= paginacao.totalPages - 1}
-              onClick={() => onPageChange(paginacao.page + 1)}
-            >
+            <Button variant="outline" size="sm" disabled={paginacao.page >= paginacao.totalPages - 1}
+              onClick={() => onPageChange(paginacao.page + 1)}>
               <ChevronRight className="w-4 h-4" />
             </Button>
           </div>
         </div>
       )}
 
-      {/* Dialog de edição */}
       <Dialog open={!!editando} onOpenChange={open => !open && setEditando(null)}>
         {editando && (
-          <EditDialog conta={editando} onClose={() => { setEditando(null); onRefresh(); }} />
+          <EditDialog transacao={editando} onClose={() => { setEditando(null); onRefresh(); }} />
         )}
       </Dialog>
     </>
