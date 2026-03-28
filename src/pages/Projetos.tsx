@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Plus, Trash2, Pencil, FolderKanban, ChevronDown, ChevronUp,
-  Target, CheckCircle2, Clock, PlayCircle, Link2, Receipt,
+  Target, CheckCircle2, Clock, PlayCircle, Link2, Receipt, Eye, EyeOff,
+  Share2, X, Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,6 +22,7 @@ import { api } from '@/services/api';
 import {
   CATEGORIA_LABELS, CATEGORIA_ICONS, METODO_PAGAMENTO_LABELS,
   type MetodoPagamento, type Projeto, type ProjetoItem, type Transacao,
+  type ProjetoCompartilhamento,
 } from '@/types';
 import { formatCurrency, formatCurrencyInput, parseCurrencyInput } from '@/utils/format';
 
@@ -156,24 +160,120 @@ function TransacoesDoItem({ item }: { item: ProjetoItem }) {
   );
 }
 
+// ─── Dialog de Compartilhamento ──────────────────────────────
+function CompartilharDialog({ projeto, onClose }: { projeto: Projeto; onClose: () => void }) {
+  const { toast } = useToast();
+  const [email, setEmail] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [lista, setLista] = useState<ProjetoCompartilhamento[]>([]);
+  const [loadingLista, setLoadingLista] = useState(true);
+
+  useEffect(() => {
+    api.getCompartilhamentos(projeto.id)
+      .then(setLista)
+      .catch(() => {/* silent */})
+      .finally(() => setLoadingLista(false));
+  }, [projeto.id]);
+
+  const handleCompartilhar = async () => {
+    if (!email.trim()) return;
+    setSaving(true);
+    try {
+      await api.compartilharProjeto(projeto.id, email.trim());
+      toast({ title: 'Projeto compartilhado!' });
+      setEmail('');
+      const updated = await api.getCompartilhamentos(projeto.id);
+      setLista(updated);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Erro ao compartilhar';
+      toast({ title: msg, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRemover = async (id: string) => {
+    try {
+      await api.removerCompartilhamento(id);
+      setLista(prev => prev.filter(c => c.id !== id));
+      toast({ title: 'Acesso removido.' });
+    } catch {
+      toast({ title: 'Erro ao remover acesso', variant: 'destructive' });
+    }
+  };
+
+  return (
+    <DialogContent className="max-w-md">
+      <DialogHeader>
+        <DialogTitle className="flex items-center gap-2">
+          <Users className="w-4 h-4" /> Compartilhar "{projeto.nome}"
+        </DialogTitle>
+      </DialogHeader>
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Usuários convidados podem visualizar o projeto e seus itens. Dados financeiros privados (contas, transações) nunca são compartilhados.
+        </p>
+        <div className="flex gap-2">
+          <Input
+            placeholder="email@exemplo.com"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleCompartilhar()}
+            className="flex-1"
+          />
+          <Button onClick={handleCompartilhar} disabled={saving || !email.trim()}>
+            {saving ? '...' : 'Convidar'}
+          </Button>
+        </div>
+        <div>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Com acesso</p>
+          {loadingLista ? (
+            <p className="text-sm text-muted-foreground">Carregando...</p>
+          ) : lista.length === 0 ? (
+            <p className="text-sm text-muted-foreground italic">Nenhum compartilhamento ainda.</p>
+          ) : (
+            <div className="space-y-2">
+              {lista.map(c => (
+                <div key={c.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2">
+                  <span className="text-sm">{c.sharedWithId}</span>
+                  <button onClick={() => handleRemover(c.id)} className="text-destructive hover:text-destructive/80">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="flex justify-end pt-2">
+        <Button variant="outline" onClick={onClose}>Fechar</Button>
+      </div>
+    </DialogContent>
+  );
+}
+
 // ─── Página ──────────────────────────────────────────────────
 export default function ProjetosPage() {
-  const { projetos, contas, addProjeto, updateProjeto, deleteProjeto } = useApp();
+  const { projetos, contas, addProjeto, updateProjeto, deleteProjeto, updateProjetoItemLocal, refreshProjetos } = useApp();
   const { toast } = useToast();
+
+  useEffect(() => { refreshProjetos(); }, []);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Projeto | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [transacoesItemId, setTransacoesItemId] = useState<string | null>(null);
+  const [compartilhandoProjeto, setCompartilhandoProjeto] = useState<Projeto | null>(null);
 
   const [nome, setNome] = useState('');
   const [descricao, setDescricao] = useState('');
   const [orcamento, setOrcamento] = useState('');
   const [status, setStatus] = useState<Projeto['status']>('planejado');
   const [itens, setItens] = useState<Omit<ProjetoItem, 'id'>[]>([]);
+  const [mdPreview, setMdPreview] = useState(false);
 
   const resetForm = () => {
     setNome(''); setDescricao(''); setOrcamento(''); setStatus('planejado'); setItens([]);
-    setEditing(null);
+    setEditing(null); setMdPreview(false);
   };
 
   const openNew = () => { resetForm(); setModalOpen(true); };
@@ -213,17 +313,14 @@ export default function ProjetosPage() {
     const newVal = !item.isCompleted;
     try {
       await api.toggleProjetoItemCompleted(item.id, newVal);
-      updateProjeto(projeto.id, {
-        ...projeto,
-        itens: projeto.itens.map(i => i.id === item.id ? { ...i, isCompleted: newVal } : i),
-      });
+      updateProjetoItemLocal(projeto.id, item.id, { isCompleted: newVal });
     } catch {
       toast({ title: 'Erro ao atualizar item', variant: 'destructive' });
     }
   };
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Projetos</h1>
         <Button onClick={openNew} className="gradient-primary text-primary-foreground rounded-xl">
@@ -284,6 +381,11 @@ export default function ProjetosPage() {
                       </p>
                     </div>
                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${cfg.color}`}>{cfg.label}</span>
+                    {projeto.isShared && (
+                      <Badge variant="secondary" className="text-[10px] gap-1 shrink-0">
+                        <Users className="w-3 h-3" /> Compartilhado
+                      </Badge>
+                    )}
                     <p className="font-bold text-foreground">{formatCurrency(projeto.orcamento || totalProjeto)}</p>
                     {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
                   </div>
@@ -298,7 +400,9 @@ export default function ProjetosPage() {
                       >
                         <div className="p-4 space-y-3">
                           {projeto.descricao && (
-                            <p className="text-sm text-muted-foreground">{projeto.descricao}</p>
+                            <div className="prose prose-sm dark:prose-invert max-w-none text-muted-foreground">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]}>{projeto.descricao}</ReactMarkdown>
+                            </div>
                           )}
 
                           {/* Checklist de itens */}
@@ -373,14 +477,24 @@ export default function ProjetosPage() {
 
                           <Separator />
 
-                          <div className="flex gap-2 justify-end pt-1">
-                            <Button variant="outline" size="sm" onClick={() => openEdit(projeto)} className="text-xs rounded-lg">
-                              <Pencil className="w-3 h-3 mr-1" /> Editar
-                            </Button>
-                            <Button variant="ghost" size="sm" className="text-xs text-destructive"
-                              onClick={() => { deleteProjeto(projeto.id); toast({ title: 'Projeto removido' }); }}>
-                              <Trash2 className="w-3 h-3 mr-1" /> Remover
-                            </Button>
+                          <div className="flex gap-2 justify-end pt-1 flex-wrap">
+                            {!projeto.isShared && (
+                              <Button variant="outline" size="sm" className="text-xs rounded-lg"
+                                onClick={() => setCompartilhandoProjeto(projeto)}>
+                                <Share2 className="w-3 h-3 mr-1" /> Compartilhar
+                              </Button>
+                            )}
+                            {!projeto.isShared && (
+                              <>
+                                <Button variant="outline" size="sm" onClick={() => openEdit(projeto)} className="text-xs rounded-lg">
+                                  <Pencil className="w-3 h-3 mr-1" /> Editar
+                                </Button>
+                                <Button variant="ghost" size="sm" className="text-xs text-destructive"
+                                  onClick={() => { deleteProjeto(projeto.id); toast({ title: 'Projeto removido' }); }}>
+                                  <Trash2 className="w-3 h-3 mr-1" /> Remover
+                                </Button>
+                              </>
+                            )}
                           </div>
                         </div>
                       </motion.div>
@@ -392,6 +506,13 @@ export default function ProjetosPage() {
           </AnimatePresence>
         </div>
       )}
+
+      {/* Modal compartilhar */}
+      <Dialog open={!!compartilhandoProjeto} onOpenChange={v => { if (!v) setCompartilhandoProjeto(null); }}>
+        {compartilhandoProjeto && (
+          <CompartilharDialog projeto={compartilhandoProjeto} onClose={() => setCompartilhandoProjeto(null)} />
+        )}
+      </Dialog>
 
       {/* Modal criar/editar */}
       <Dialog open={modalOpen} onOpenChange={v => { if (!v) resetForm(); setModalOpen(v); }}>
@@ -405,9 +526,26 @@ export default function ProjetosPage() {
               <Input value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Reforma da cozinha" />
             </div>
             <div className="space-y-2">
-              <Label>Descrição</Label>
-              <Textarea value={descricao} onChange={e => setDescricao(e.target.value)}
-                placeholder="Descreva o projeto..." rows={2} />
+              <div className="flex items-center justify-between">
+                <Label>Descrição (Markdown)</Label>
+                <Button type="button" variant="ghost" size="sm" className="h-6 text-xs gap-1"
+                  onClick={() => setMdPreview(v => !v)}>
+                  {mdPreview ? <><EyeOff className="w-3 h-3" /> Editar</> : <><Eye className="w-3 h-3" /> Prévia</>}
+                </Button>
+              </div>
+              {mdPreview ? (
+                <div className="prose prose-sm dark:prose-invert max-w-none min-h-[64px] rounded-md border border-border p-3 text-sm">
+                  {descricao ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{descricao}</ReactMarkdown>
+                  ) : (
+                    <span className="text-muted-foreground italic">Sem descrição</span>
+                  )}
+                </div>
+              ) : (
+                <Textarea value={descricao} onChange={e => setDescricao(e.target.value)}
+                  placeholder={'Suporta Markdown\n\n**negrito**, _itálico_, [link](url)\n- lista de itens'}
+                  rows={4} className="font-mono text-sm" />
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">

@@ -16,7 +16,10 @@ function mapContaToDespesa(conta: Conta): Despesa {
     categoria: conta.categoria as Despesa['categoria'],
     dataVencimento: `${conta.ano}-${mesFormatado}-${diaFormatado}`,
     paga: conta.paga,
-    parcelada: false,
+    parcelada: conta.parcelada ?? false,
+    totalParcelas: conta.totalParcelas,
+    parcelasPagas: conta.parcelasPagas ?? 0,
+    parcelaAtual: conta.parcelada ? (conta.parcelasPagas ?? 0) + 1 : undefined,
     projetoId: conta.projetoId,
     metodoPagamento: conta.metodoPagamento,
     dataPagamento: conta.dataPagamento,
@@ -39,20 +42,64 @@ export function useDespesas() {
 
   const addDespesa = useCallback(async (d: Omit<Despesa, 'id'>) => {
     const dataPartes = d.dataVencimento.split('-');
-    await addConta({
-      descricao: d.titulo,
-      categoria: d.categoria as Conta['categoria'],
-      valor: d.valor,
-      tipo: d.tipo,
-      diaVencimento: parseInt(dataPartes[2]),
-      paga: d.paga,
-      mes: parseInt(dataPartes[1]),
-      ano: parseInt(dataPartes[0]),
-      metodoPagamento: d.metodoPagamento,
-      dataPagamento: d.dataPagamento,
-      projetoId: d.projetoId,
-      isTransferencia: d.isTransferencia ?? false,
-    });
+    const startDia = parseInt(dataPartes[2]);
+    const startMes = parseInt(dataPartes[1]);
+    const startAno = parseInt(dataPartes[0]);
+    const hoje = new Date();
+    const hojeAno = hoje.getFullYear();
+    const hojeMes = hoje.getMonth() + 1;
+
+    if (d.parcelada && d.totalParcelas && d.totalParcelas > 1) {
+      // Cria TODAS as parcelas, retroagindo meses passados (paga: true) e avançando futuros
+      const grupoId = crypto.randomUUID();
+      const parcelasPagasInitial = d.parcelasPagas ?? 0;
+      // Mês real do início: recua parcelasPagasInitial meses a partir da data escolhida
+      const inicioOffset = (startMes - 1) - parcelasPagasInitial;
+      const mesInicio = ((inicioOffset % 12) + 12) % 12 + 1;
+      const anoInicio = startAno + Math.floor(inicioOffset / 12);
+      const tasks = Array.from({ length: d.totalParcelas }, (_, i) => {
+        const totalMesesOffset = (mesInicio - 1) + i;
+        const mesParcela = (totalMesesOffset % 12) + 1;
+        const anoParcela = anoInicio + Math.floor(totalMesesOffset / 12);
+        const isPast = anoParcela < hojeAno || (anoParcela === hojeAno && mesParcela < hojeMes);
+        return addConta({
+          descricao: d.titulo,
+          categoria: d.categoria as Conta['categoria'],
+          valor: d.valor,
+          tipo: d.tipo,
+          diaVencimento: startDia,
+          paga: isPast,
+          mes: mesParcela,
+          ano: anoParcela,
+          parcelada: true,
+          totalParcelas: d.totalParcelas,
+          parcelasPagas: i,
+          metodoPagamento: d.metodoPagamento,
+          projetoId: d.projetoId,
+          isTransferencia: false,
+          parcelamentoGrupoId: grupoId,
+        } as Omit<Conta, 'id'>);
+      });
+      await Promise.all(tasks);
+    } else {
+      await addConta({
+        descricao: d.titulo,
+        categoria: d.categoria as Conta['categoria'],
+        valor: d.valor,
+        tipo: d.tipo,
+        diaVencimento: startDia,
+        paga: d.paga,
+        mes: startMes,
+        ano: startAno,
+        parcelada: d.parcelada ?? false,
+        totalParcelas: d.totalParcelas,
+        parcelasPagas: d.parcelasPagas ?? 0,
+        metodoPagamento: d.metodoPagamento,
+        dataPagamento: d.dataPagamento,
+        projetoId: d.projetoId,
+        isTransferencia: d.isTransferencia ?? false,
+      });
+    }
   }, [addConta]);
 
   const updateLocalDespesa = useCallback(async (id: string, d: Partial<Despesa>) => {
@@ -68,6 +115,9 @@ export function useDespesas() {
       updatePayload.ano = parseInt(dataPartes[0]);
     }
     if (d.paga !== undefined) updatePayload.paga = d.paga;
+    if (d.parcelada !== undefined) updatePayload.parcelada = d.parcelada;
+    if (d.totalParcelas !== undefined) updatePayload.totalParcelas = d.totalParcelas;
+    if (d.parcelasPagas !== undefined) updatePayload.parcelasPagas = d.parcelasPagas;
     if (d.metodoPagamento !== undefined) updatePayload.metodoPagamento = d.metodoPagamento;
     if (d.dataPagamento !== undefined) updatePayload.dataPagamento = d.dataPagamento;
     if (d.projetoId !== undefined) updatePayload.projetoId = d.projetoId;

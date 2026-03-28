@@ -46,6 +46,10 @@ export interface Conta {
   paga: boolean;
   mes: number;
   ano: number;
+  // Parcelamento
+  parcelada?: boolean;
+  totalParcelas?: number;
+  parcelasPagas?: number;
   // Campos estendidos
   metodoPagamento?: MetodoPagamento;
   dataPagamento?: string; // ISO date
@@ -53,6 +57,7 @@ export interface Conta {
   isTransferencia?: boolean;
   transferenciaPar?: string; // id da conta par em transferências internas
   importacaoId?: string;
+  parcelamentoGrupoId?: string; // agrupa todas as parcelas de um mesmo parcelamento
 }
 
 // ─── Importação de Extratos ──────────────────────────
@@ -189,5 +194,16 @@ export interface Projeto {
   dataInicio?: string;
   dataFim?: string;
   itens: ProjetoItem[];
+  createdAt: string;
+  isShared?: boolean;   // true quando foi compartilhado com o usuário atual
+  ownerId?: string;     // user_id do dono original
+}
+
+export interface ProjetoCompartilhamento {
+  id: string;
+  projetoId: string;
+  ownerId: string;
+  sharedWithId: string;
+  sharedWithEmail?: string;
   createdAt: string;
 }

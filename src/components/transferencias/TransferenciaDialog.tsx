@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { ArrowLeftRight, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ interface TransferenciaDialogProps {
 const hoje = new Date();
 
 export default function TransferenciaDialog({ trigger, onSuccess }: TransferenciaDialogProps) {
-  const { createTransferencia } = useApp();
+  const { createTransferencia, projetos, contas } = useApp();
   const [open, setOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
@@ -27,7 +27,20 @@ export default function TransferenciaDialog({ trigger, onSuccess }: Transferenci
     valor: 0,
     data: hoje.toISOString().split('T')[0],
     metodoPagamento: 'pix' as MetodoPagamento,
+    projetoId: '',
+    projetoItemId: '',
+    despesaId: '',
   });
+
+  const projetoSelecionado = useMemo(
+    () => projetos.find(p => p.id === form.projetoId),
+    [projetos, form.projetoId]
+  );
+
+  const despesasAbertas = useMemo(
+    () => contas.filter(c => !c.paga && !c.isTransferencia),
+    [contas]
+  );
 
   const handleSubmit = async () => {
     if (!form.descricao || form.valor <= 0) {
@@ -45,10 +58,13 @@ export default function TransferenciaDialog({ trigger, onSuccess }: Transferenci
         ano: data.getFullYear(),
         diaVencimento: data.getDate(),
         metodoPagamento: form.metodoPagamento,
+        projetoId: form.projetoId || undefined,
+        projetoItemId: form.projetoItemId || undefined,
+        despesaId: form.despesaId || undefined,
       });
       toast.success('Transferência registrada! As duas entradas foram criadas e não contam nos seus gastos.');
       setOpen(false);
-      setForm({ descricao: '', valor: 0, data: hoje.toISOString().split('T')[0], metodoPagamento: 'pix' });
+      setForm({ descricao: '', valor: 0, data: hoje.toISOString().split('T')[0], metodoPagamento: 'pix', projetoId: '', projetoItemId: '', despesaId: '' });
       onSuccess?.();
     } catch {
       toast.error('Erro ao registrar a transferência.');
@@ -121,6 +137,62 @@ export default function TransferenciaDialog({ trigger, onSuccess }: Transferenci
               </SelectContent>
             </Select>
           </div>
+
+          {/* Vínculo opcional com projeto / item */}
+          <div>
+            <Label>Projeto (opcional)</Label>
+            <Select
+              value={form.projetoId || '__none__'}
+              onValueChange={v => setForm(f => ({ ...f, projetoId: v === '__none__' ? '' : v, projetoItemId: '' }))}
+            >
+              <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__none__">Nenhum</SelectItem>
+                {projetos.filter(p => !p.isShared).map(p => (
+                  <SelectItem key={p.id} value={p.id}>{p.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {projetoSelecionado && projetoSelecionado.itens.length > 0 && (
+            <div>
+              <Label>Item do projeto (opcional)</Label>
+              <Select
+                value={form.projetoItemId || '__none__'}
+                onValueChange={v => setForm(f => ({ ...f, projetoItemId: v === '__none__' ? '' : v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Nenhum" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Nenhum</SelectItem>
+                  {projetoSelecionado.itens.map(item => (
+                    <SelectItem key={item.id} value={item.id}>{item.descricao}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+
+          {/* Vínculo opcional com despesa em aberto */}
+          {despesasAbertas.length > 0 && (
+            <div>
+              <Label>Despesa vinculada (opcional)</Label>
+              <Select
+                value={form.despesaId || '__none__'}
+                onValueChange={v => setForm(f => ({ ...f, despesaId: v === '__none__' ? '' : v }))}
+              >
+                <SelectTrigger><SelectValue placeholder="Nenhuma" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Nenhuma</SelectItem>
+                  {despesasAbertas.map(c => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.descricao} — R$ {c.valor.toFixed(2)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => setOpen(false)}>Cancelar</Button>

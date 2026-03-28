@@ -36,12 +36,16 @@ function mapConta(c: Record<string, unknown>): Conta {
     paga: c.paga as boolean,
     mes: c.mes as number,
     ano: c.ano as number,
+    parcelada: (c.parcelada as boolean) ?? false,
+    totalParcelas: (c.total_parcelas as number) ?? undefined,
+    parcelasPagas: (c.parcelas_pagas as number) ?? 0,
     metodoPagamento: (c.metodo_pagamento as Conta['metodoPagamento']) ?? undefined,
     dataPagamento: (c.data_pagamento as string) ?? undefined,
     projetoId: (c.projeto_id as string) ?? undefined,
     isTransferencia: (c.is_transferencia as boolean) ?? false,
     transferenciaPar: (c.transferencia_par_id as string) ?? undefined,
     importacaoId: (c.importacao_id as string) ?? undefined,
+    parcelamentoGrupoId: (c.parcelamento_grupo_id as string) ?? undefined,
   };
 }
 
@@ -167,12 +171,16 @@ class ApiService {
       paga: data.paga || false,
       mes: data.mes,
       ano: data.ano,
+      parcelada: data.parcelada ?? false,
+      total_parcelas: data.totalParcelas ?? null,
+      parcelas_pagas: data.parcelasPagas ?? 0,
       metodo_pagamento: data.metodoPagamento ?? null,
       data_pagamento: data.dataPagamento ?? null,
       projeto_id: data.projetoId ?? null,
       is_transferencia: data.isTransferencia ?? false,
       transferencia_par_id: data.transferenciaPar ?? null,
       importacao_id: data.importacaoId ?? null,
+      parcelamento_grupo_id: data.parcelamentoGrupoId ?? null,
     }).select().single();
 
     if (error) throw error;
@@ -195,6 +203,9 @@ class ApiService {
     if (data.metodoPagamento !== undefined) updateData.metodo_pagamento = data.metodoPagamento;
     if (data.dataPagamento !== undefined) updateData.data_pagamento = data.dataPagamento;
     if (data.projetoId !== undefined) updateData.projeto_id = data.projetoId;
+    if (data.parcelada !== undefined) updateData.parcelada = data.parcelada;
+    if (data.totalParcelas !== undefined) updateData.total_parcelas = data.totalParcelas;
+    if (data.parcelasPagas !== undefined) updateData.parcelas_pagas = data.parcelasPagas;
     if (data.isTransferencia !== undefined) updateData.is_transferencia = data.isTransferencia;
     if (data.transferenciaPar !== undefined) updateData.transferencia_par_id = data.transferenciaPar;
     if (data.importacaoId !== undefined) updateData.importacao_id = data.importacaoId;
@@ -447,6 +458,9 @@ class ApiService {
     ano: number;
     diaVencimento: number;
     metodoPagamento?: Conta['metodoPagamento'];
+    projetoId?: string;
+    projetoItemId?: string;
+    despesaId?: string;
   }): Promise<{ debito: Conta; credito: Conta }> {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
@@ -465,10 +479,10 @@ class ApiService {
       metodo_pagamento: data.metodoPagamento ?? null,
     };
 
-    // Cria o débito primeiro
+    // Cria o débito primeiro (com projeto_id se fornecido)
     const { data: debito, error: e1 } = await supabase
       .from('contas')
-      .insert({ ...base, descricao: `${data.descricao} (saída)` })
+      .insert({ ...base, descricao: `${data.descricao} (saída)`, projeto_id: data.projetoId ?? null })
       .select()
       .single();
     if (e1) throw e1;
@@ -484,10 +498,29 @@ class ApiService {
     // Fecha o link bidirecional
     await supabase.from('contas').update({ transferencia_par_id: credito.id }).eq('id', debito.id);
 
+    // Vincula item de projeto ao débito se informado
+    if (data.projetoItemId) {
+      await this.linkProjetoItem(data.projetoItemId, debito.id as string);
+    }
+
+    // Marca despesa vinculada como paga se informada
+    if (data.despesaId) {
+      const dataStr = `${data.ano}-${String(data.mes).padStart(2, '0')}-${String(data.diaVencimento).padStart(2, '0')}`;
+      await supabase.from('contas').update({ paga: true, data_pagamento: dataStr }).eq('id', data.despesaId);
+    }
+
     return {
-      debito: mapConta({ ...debito, transferencia_par_id: credito.id } as Record<string, unknown>),
+      debito: mapConta({ ...debito, transferencia_par_id: credito.id, projeto_id: data.projetoId ?? null } as Record<string, unknown>),
       credito: mapConta(credito as Record<string, unknown>),
     };
+  }
+
+  async linkProjetoItem(itemId: string, contaId: string): Promise<void> {
+    const { error } = await supabase
+      .from('projeto_itens')
+      .update({ conta_id: contaId, is_completed: true })
+      .eq('id', itemId);
+    if (error) throw error;
   }
 
   async desvincularTransferencia(id: string): Promise<void> {
@@ -719,25 +752,73 @@ class ApiService {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
+    // RLS com migration_v5 já retorna próprios + compartilhados numa única query
     const { data, error } = await supabase.from('projetos').select(`
       *,
       itens:projeto_itens(*)
-    `).eq('user_id', user.id);
+    `);
     if (error) throw error;
 
-    return data.map((p: Record<string, unknown>) => ({
+    const mapProjeto = (p: Record<string, unknown>, isShared = false) => ({
       ...p,
       nome: p.nome,
       titulo: p.nome,
       orcamento: p.orcamento,
       orcamentoLimite: p.orcamento,
       createdAt: p.created_at,
+      ownerId: p.user_id as string,
+      isShared,
       itens: ((p.itens as Record<string, unknown>[]) || []).map((i: Record<string, unknown>) => ({
         ...i,
         valorEstimado: i.valor_estimado,
         contaId: i.conta_id,
+        isCompleted: i.is_completed as boolean,
       }))
+    });
+
+    return (data as Record<string, unknown>[]).map(p =>
+      mapProjeto(p, (p.user_id as string) !== user.id)
+    );
+  }
+
+  // ─── Compartilhamento de Projetos ────────────────────
+  async compartilharProjeto(projetoId: string, email: string): Promise<void> {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    // Busca o user_id do email via RPC segura (criada em migration_v5)
+    const { data: targetId, error: rpcError } = await supabase
+      .rpc('get_user_id_by_email', { p_email: email });
+    if (rpcError) throw rpcError;
+    if (!targetId) throw new Error('Usuário não encontrado com esse email');
+    if (targetId === user.id) throw new Error('Você não pode compartilhar com você mesmo');
+
+    const { error } = await supabase.from('projeto_compartilhamentos').insert({
+      projeto_id: projetoId,
+      owner_id: user.id,
+      shared_with_id: targetId,
+    });
+    if (error) throw error;
+  }
+
+  async getCompartilhamentos(projetoId: string): Promise<import('@/types').ProjetoCompartilhamento[]> {
+    const { data, error } = await supabase
+      .from('projeto_compartilhamentos')
+      .select('*')
+      .eq('projeto_id', projetoId);
+    if (error) throw error;
+    return (data as Record<string, unknown>[]).map(r => ({
+      id: r.id as string,
+      projetoId: r.projeto_id as string,
+      ownerId: r.owner_id as string,
+      sharedWithId: r.shared_with_id as string,
+      createdAt: r.created_at as string,
     }));
+  }
+
+  async removerCompartilhamento(id: string): Promise<void> {
+    const { error } = await supabase.from('projeto_compartilhamentos').delete().eq('id', id);
+    if (error) throw error;
   }
 
   async createProjeto(data: Record<string, unknown>) {
@@ -810,6 +891,7 @@ class ApiService {
             valor_estimado: i.valorEstimado || 0,
             categoria: i.categoria || 'outros',
             conta_id: i.contaId || null,
+            is_completed: i.isCompleted ?? false,
           }))
         ).select();
         itemsSaved = (currentItems as Record<string, unknown>[]) || [];

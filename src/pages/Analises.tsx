@@ -14,7 +14,7 @@ export default function AnalisesPage() {
   const { analises } = useApp();
 
   return (
-    <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6">
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Análises</h1>
       </div>

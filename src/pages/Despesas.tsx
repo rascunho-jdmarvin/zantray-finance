@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { Plus, Trash2, Edit2, Check, Upload, AlertCircle, Clock, CheckCircle2 } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, Upload, AlertCircle, Clock, CheckCircle2, Layers, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useQueryClient } from '@tanstack/react-query';
@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Progress } from '@/components/ui/progress';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
 } from '@/components/ui/dialog';
@@ -30,6 +31,10 @@ const todayStr = new Date().toISOString().split('T')[0];
 
 function isAtrasada(d: Despesa) {
   return !d.paga && d.dataVencimento < todayStr;
+}
+
+function isParceladaFinalizada(d: Despesa) {
+  return d.parcelada && d.totalParcelas !== undefined && (d.parcelasPagas ?? 0) >= d.totalParcelas;
 }
 
 const emptyForm = (): Omit<Despesa, 'id'> => ({
@@ -55,7 +60,7 @@ function RegistrarPagamentoDialog({
   despesa: Despesa;
   onClose: () => void;
 }) {
-  const { togglePaga } = useFinance();
+  const { togglePaga, updateDespesa } = useFinance();
   const { projetos: projetosBase } = useApp();
   const qc = useQueryClient();
   const [saving, setSaving] = useState(false);
@@ -76,10 +81,18 @@ function RegistrarPagamentoDialog({
     ? (projetosBase as unknown as ProjetoBase[]).find(p => p.id === despesa.projetoId)
     : null;
 
+  const novaParcelasPagas = despesa.parcelada ? (despesa.parcelasPagas ?? 0) + 1 : undefined;
+  const parcelaFinalizada = despesa.parcelada && despesa.totalParcelas !== undefined
+    && novaParcelasPagas !== undefined && novaParcelasPagas >= despesa.totalParcelas;
+
   const handleConfirm = async () => {
     setSaving(true);
     try {
       await togglePaga(despesa.id);
+      // Increment parcelas_pagas for installment bills
+      if (despesa.parcelada && novaParcelasPagas !== undefined) {
+        updateDespesa(despesa.id, { parcelasPagas: novaParcelasPagas });
+      }
       if (criarTransacao) {
         await api.createTransacao({
           descricao: despesa.titulo,
@@ -95,7 +108,7 @@ function RegistrarPagamentoDialog({
         await qc.invalidateQueries({ queryKey: ['extrato'] });
         await qc.invalidateQueries({ queryKey: ['extrato-sumario'] });
       }
-      toast.success('Pagamento registrado!');
+      toast.success(parcelaFinalizada ? 'Última parcela paga! Parcelamento finalizado.' : 'Pagamento registrado!');
       onClose();
     } catch {
       toast.error('Erro ao registrar pagamento.');
@@ -115,6 +128,12 @@ function RegistrarPagamentoDialog({
           <p className="text-muted-foreground text-xs mt-0.5">
             Vencimento: {new Date(despesa.dataVencimento + 'T00:00').toLocaleDateString('pt-BR')}
           </p>
+          {despesa.parcelada && (
+            <p className="text-xs text-primary mt-0.5">
+              Parcela {(despesa.parcelasPagas ?? 0) + 1} de {despesa.totalParcelas}
+              {parcelaFinalizada && <span className="ml-2 text-green-600 font-medium">— Última parcela!</span>}
+            </p>
+          )}
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -188,6 +207,9 @@ function DespesaRow({
   onPagar: (d: Despesa) => void;
 }) {
   const atrasada = isAtrasada(d);
+  const finalizada = isParceladaFinalizada(d);
+  const emAndamento = d.parcelada && !finalizada;
+
   return (
     <div className="flex items-center justify-between py-3 border-b border-border last:border-0">
       <div className="flex items-center gap-3 min-w-0">
@@ -200,20 +222,40 @@ function DespesaRow({
                 <AlertCircle className="w-2.5 h-2.5" /> Atrasada
               </Badge>
             )}
+            {emAndamento && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-blue-600 border-blue-300">
+                Em andamento
+              </Badge>
+            )}
+            {finalizada && (
+              <Badge variant="outline" className="text-[10px] px-1.5 py-0 text-green-600 border-green-300">
+                Finalizado
+              </Badge>
+            )}
             {d.projetoId && (
               <Badge variant="outline" className="text-[10px] px-1 py-0">Projeto</Badge>
             )}
           </div>
           <p className="text-xs text-muted-foreground">
             {d.paga ? 'Paga' : `Vence: ${new Date(d.dataVencimento + 'T00:00').toLocaleDateString('pt-BR')}`}
-            {d.parcelada && ` · ${d.parcelaAtual}/${d.totalParcelas}`}
+            {d.parcelada && ` · ${d.parcelasPagas ?? 0}/${d.totalParcelas} parcelas`}
             {d.metodoPagamento && d.metodoPagamento !== 'outros' && ` · ${METODO_PAGAMENTO_LABELS[d.metodoPagamento]}`}
           </p>
+          {d.parcelada && d.totalParcelas && (
+            <Progress
+              value={((d.parcelasPagas ?? 0) / d.totalParcelas) * 100}
+              className="h-1 mt-1 w-32"
+            />
+          )}
         </div>
       </div>
       <div className="flex items-center gap-2 shrink-0">
         <p className="text-sm font-semibold text-foreground whitespace-nowrap">{formatCurrency(d.valor)}</p>
-        {d.paga ? (
+        {finalizada ? (
+          <Badge variant="secondary" className="text-xs gap-1">
+            <CheckCircle2 className="w-3 h-3" /> Quitado
+          </Badge>
+        ) : d.paga ? (
           <Button size="sm" variant="default" className="h-7 px-2 text-xs gap-1" onClick={() => onPagar(d)}>
             <Check className="w-3 h-3" /> Paga
           </Button>
@@ -221,7 +263,7 @@ function DespesaRow({
           <Button size="sm" variant="outline"
             className={`h-7 px-2 text-xs ${atrasada ? 'border-destructive text-destructive hover:bg-destructive/10' : ''}`}
             onClick={() => onPagar(d)}>
-            Pagar
+            {d.parcelada ? `Pagar Parcela ${(d.parcelasPagas ?? 0) + 1}` : 'Pagar'}
           </Button>
         )}
         <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
@@ -238,20 +280,49 @@ function DespesaRow({
 }
 
 // ─── Página ──────────────────────────────────────────────────
+const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
 export default function DespesasPage() {
   const navigate = useNavigate();
-  const { user } = useApp();
-  const { despesas, addDespesa, updateDespesa, deleteDespesa, togglePaga, totalMes, totalPago, totalPendente, projetos } = useFinance();
+  const { user, currentMonth, setCurrentMonth } = useApp();
+  const { despesas, addDespesa, updateDespesa, deleteDespesa, togglePaga, projetos } = useFinance();
   const [open, setOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm());
   const [pagandoDespesa, setPagandoDespesa] = useState<Despesa | null>(null);
 
-  const { abertas, atrasadas, pagas } = useMemo(() => ({
-    abertas: despesas.filter(d => !d.paga && !isAtrasada(d)),
-    atrasadas: despesas.filter(isAtrasada),
-    pagas: despesas.filter(d => d.paga),
-  }), [despesas]);
+  const mesSelecionado = currentMonth.getMonth() + 1;
+  const anoSelecionado = currentMonth.getFullYear();
+
+  const navegarMes = (delta: number) => {
+    const d = new Date(currentMonth);
+    d.setMonth(d.getMonth() + delta);
+    setCurrentMonth(d);
+  };
+
+  const despesasReais = useMemo(
+    () => despesas.filter(d => !d.isTransferencia),
+    [despesas]
+  );
+
+  // Filtradas pelo mês selecionado
+  const despesasMes = useMemo(() => {
+    return despesasReais.filter(d => {
+      const [ano, mes] = d.dataVencimento.split('-').map(Number);
+      return ano === anoSelecionado && mes === mesSelecionado;
+    });
+  }, [despesasReais, anoSelecionado, mesSelecionado]);
+
+  const totalMes = useMemo(() => despesasMes.reduce((s, d) => s + d.valor, 0), [despesasMes]);
+  const totalPago = useMemo(() => despesasMes.filter(d => d.paga).reduce((s, d) => s + d.valor, 0), [despesasMes]);
+  const totalPendente = useMemo(() => despesasMes.filter(d => !d.paga).reduce((s, d) => s + d.valor, 0), [despesasMes]);
+
+  const { abertas, atrasadas, pagas, parceladas } = useMemo(() => ({
+    abertas: despesasMes.filter(d => !d.paga && !isAtrasada(d) && !d.parcelada),
+    atrasadas: despesasMes.filter(d => isAtrasada(d) && !d.parcelada),
+    pagas: despesasMes.filter(d => d.paga && !d.parcelada),
+    parceladas: despesasMes.filter(d => d.parcelada),
+  }), [despesasMes]);
 
   const handleOpenNew = () => { setForm(emptyForm()); setEditingId(null); setOpen(true); };
 
@@ -268,7 +339,10 @@ export default function DespesasPage() {
 
   const handleSave = () => {
     if (!form.titulo || form.valor <= 0) return;
-    const payload = { ...form, parcelaAtual: form.parcelada ? (form.parcelasPagas || 0) + 1 : undefined };
+    const payload = {
+      ...form,
+      parcelaAtual: form.parcelada ? (form.parcelasPagas || 0) + 1 : undefined,
+    };
     if (editingId) updateDespesa(editingId, payload);
     else addDespesa(payload);
     setForm(emptyForm()); setEditingId(null); setOpen(false);
@@ -297,6 +371,20 @@ export default function DespesasPage() {
           <h1 className="text-2xl font-bold text-foreground">Despesas</h1>
           <p className="text-muted-foreground text-sm mt-1">Contas a pagar e previsão de gastos</p>
         </div>
+
+        {/* Month Navigator */}
+        <div className="flex items-center gap-1 bg-muted rounded-lg px-1 py-1">
+          <button onClick={() => navegarMes(-1)} className="p-1.5 hover:bg-background rounded-md transition-colors">
+            <ChevronLeft className="w-4 h-4 text-muted-foreground" />
+          </button>
+          <span className="text-sm font-medium text-foreground px-2 min-w-[140px] text-center">
+            {MESES_PT[mesSelecionado - 1]} {anoSelecionado}
+          </span>
+          <button onClick={() => navegarMes(1)} className="p-1.5 hover:bg-background rounded-md transition-colors">
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+
         <div className="flex gap-2 flex-wrap">
           <Button variant="outline" size="sm" className="gap-1.5" onClick={() => navigate('/importacao')}>
             <Upload className="w-4 h-4" /> Importar Extrato
@@ -397,7 +485,7 @@ export default function DespesasPage() {
                     </div>
                     <div>
                       <Label>Parcelas já pagas</Label>
-                      <Input type="number" min={0} value={form.parcelasPagas || ''}
+                      <Input type="number" min={0} value={form.parcelasPagas ?? ''}
                         onChange={e => setForm(f => ({ ...f, parcelasPagas: parseInt(e.target.value) || 0 }))} />
                     </div>
                   </motion.div>
@@ -459,6 +547,9 @@ export default function DespesasPage() {
           <TabsTrigger value="atrasadas" className="gap-1.5">
             <AlertCircle className="w-3.5 h-3.5" /> Atrasadas ({atrasadas.length})
           </TabsTrigger>
+          <TabsTrigger value="parceladas" className="gap-1.5">
+            <Layers className="w-3.5 h-3.5" /> Parceladas ({parceladas.length})
+          </TabsTrigger>
           <TabsTrigger value="pagas" className="gap-1.5">
             <CheckCircle2 className="w-3.5 h-3.5" /> Pagas ({pagas.length})
           </TabsTrigger>
@@ -476,6 +567,18 @@ export default function DespesasPage() {
             </div>
           )}
           <Card><CardContent className="p-4"><DespesaList items={atrasadas} /></CardContent></Card>
+        </TabsContent>
+
+        <TabsContent value="parceladas">
+          <Card>
+            <CardContent className="p-4">
+              {parceladas.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">Nenhuma compra parcelada cadastrada.</p>
+              ) : (
+                parceladas.map(d => <DespesaRow key={d.id} d={d} onEdit={handleEdit} onDelete={handleDelete} onPagar={handlePagar} />)
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="pagas">

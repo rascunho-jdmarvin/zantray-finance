@@ -24,11 +24,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
 
   return (
-    <div className="flex min-h-screen w-full bg-background">
+    <div className="flex h-screen w-full overflow-hidden bg-background">
       {/* Desktop Sidebar */}
       <aside
         className={cn(
-          'hidden md:flex flex-col gradient-sidebar border-r border-sidebar-border transition-all duration-300',
+          'hidden md:flex flex-col gradient-sidebar border-r border-sidebar-border transition-all duration-300 h-screen shrink-0',
           collapsed ? 'w-16' : 'w-60',
         )}
       >
@@ -150,7 +150,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </AnimatePresence>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         {/* Mobile Header */}
         <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
           <button onClick={() => setSidebarOpen(true)}>

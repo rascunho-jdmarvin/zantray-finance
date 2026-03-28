@@ -34,7 +34,9 @@ interface AppContextType extends AppState {
   deleteProjeto: (id: string) => void;
   addImportacao: (imp: Importacao) => void;
   removeImportacao: (id: string) => void;
+  updateProjetoItemLocal: (projetoId: string, itemId: string, changes: Partial<import('@/types').ProjetoItem>) => void;
   refreshData: () => Promise<void>;
+  refreshProjetos: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -196,7 +198,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const createTransferencia = useCallback(async (data: Parameters<typeof api.createTransferencia>[0]) => {
     const { debito, credito } = await api.createTransferencia(data);
-    setState(prev => ({ ...prev, contas: [...prev.contas, debito, credito] }));
+    setState(prev => {
+      let contas = [...prev.contas, debito, credito];
+      // Marca despesa vinculada como paga no estado local
+      if (data.despesaId) {
+        const dataStr = `${data.ano}-${String(data.mes).padStart(2, '0')}-${String(data.diaVencimento).padStart(2, '0')}`;
+        contas = contas.map(c => c.id === data.despesaId ? { ...c, paga: true, dataPagamento: dataStr } : c);
+      }
+      // Vincula item de projeto ao débito no estado local
+      let projetos = prev.projetos;
+      if (data.projetoId && data.projetoItemId) {
+        projetos = projetos.map(p =>
+          p.id === data.projetoId
+            ? { ...p, itens: p.itens.map(i => i.id === data.projetoItemId ? { ...i, contaId: debito.id, isCompleted: true } : i) }
+            : p
+        );
+      }
+      return { ...prev, contas, projetos };
+    });
+  }, []);
+
+  const refreshProjetos = useCallback(async () => {
+    const projetos = await api.getProjetos();
+    setState(prev => ({ ...prev, projetos: projetos as unknown as Projeto[] }));
   }, []);
 
   const setCurrentMonth = useCallback((date: Date) => {
@@ -250,6 +274,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setState(prev => ({ ...prev, projetos: prev.projetos.filter(p => p.id !== id) }));
   }, []);
 
+  const updateProjetoItemLocal = useCallback((projetoId: string, itemId: string, changes: Partial<import('@/types').ProjetoItem>) => {
+    setState(prev => ({
+      ...prev,
+      projetos: prev.projetos.map(p =>
+        p.id === projetoId
+          ? { ...p, itens: p.itens.map(i => i.id === itemId ? { ...i, ...changes } : i) }
+          : p
+      ),
+    }));
+  }, []);
+
   const addImportacao = useCallback((imp: Importacao) => {
     setState(prev => ({ ...prev, importacoes: [imp, ...prev.importacoes] }));
   }, []);
@@ -271,9 +306,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       login, register, logout, updateUser, completeOnboarding,
       addConta, updateConta, deleteConta, togglePaga, createTransferencia,
       setCurrentMonth, addInvestimento, deleteInvestimento,
-      addProjeto, updateProjeto, deleteProjeto,
+      addProjeto, updateProjeto, deleteProjeto, updateProjetoItemLocal,
       addImportacao, removeImportacao,
-      refreshData,
+      refreshData, refreshProjetos,
     }}>
       {children}
     </AppContext.Provider>
